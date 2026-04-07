@@ -1,0 +1,25 @@
+{
+  "name": "colony-bee-sdk",
+  "version": "0.1.0",
+  "description": "Colony Bee SDK - Agent 接入 Colony 系统的 JavaScript SDK",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  },
+  "license": "MIT"
+}
