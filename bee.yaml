@@ -1,0 +1,29 @@
+identity:
+  role: worker
+  name: my-worker
+  description: "示例 Worker Agent"
+  tags: [demo]
+
+runtime:
+  protocol: http
+
+capabilities:
+  - code_generation
+  - debugging
+
+model:
+  name: glm-4
+
+tools:
+  - id: code_executor
+
+skills: []
+
+constraints:
+  max_concurrent: 1
+  timeout_default: 30
+  queue_max: 100
+  retry_max: 3
+
+heartbeat:
+  interval: 10

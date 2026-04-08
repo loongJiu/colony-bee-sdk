@@ -1,0 +1,70 @@
+{
+  "name": "colony-bee-sdk",
+  "version": "1.0.0",
+  "description": "Colony Bee SDK - Agent 接入 Colony 系统的 TypeScript SDK",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.cts",
+        "default": "./dist/cjs/index.cjs"
+      },
+      "default": "./dist/esm/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "npm run build:types && npm run build:rollup && npm run build:cts",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:rollup": "rollup -c",
+    "build:cts": "node scripts/generate-dcts.mjs",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "colony",
+    "bee",
+    "sdk",
+    "agent",
+    "multi-agent",
+    "orchestration"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loongJiu/colony-bee-sdk"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^29.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.5.2",
+    "rollup": "^4.60.1",
+    "tslib": "^2.8.1",
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  },
+  "license": "MIT"
+}
