@@ -25,7 +25,7 @@ export default [
     output: {
       dir: 'dist/esm',
       format: 'esm',
-      sourcemap: false,
+      sourcemap: true,
       preserveModules: true,
       preserveModulesRoot: 'src'
     },
@@ -37,7 +37,7 @@ export default [
     output: {
       dir: 'dist/cjs',
       format: 'cjs',
-      sourcemap: false,
+      sourcemap: true,
       preserveModules: true,
       preserveModulesRoot: 'src',
       exports: 'named',
