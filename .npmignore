@@ -1,0 +1,14 @@
+src/
+examples/
+scripts/
+bee.yaml
+.nvmrc
+.gitignore
+.npmignore
+*.tsbuildinfo
+rollup.config.*
+vitest.config.*
+node_modules/
+coverage/
+*.test.js
+*.spec.js

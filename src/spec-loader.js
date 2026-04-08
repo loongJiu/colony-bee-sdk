@@ -5,7 +5,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
+import { resolve } from 'node:path'
 import yaml from 'js-yaml'
 import { z } from 'zod'
 
