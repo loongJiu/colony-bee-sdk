@@ -20,44 +20,33 @@ import { ToolRegistry } from './task/tool-registry.js'
 import { SkillRegistry } from './skill-registry.js'
 import { Logger } from './logger.js'
 import { BeeError } from './errors.js'
+import type { BeeSpec } from './spec-loader.js'
+import type { AgentStatus, TaskHandler, ModelCaller, SkillDefinition } from './types.js'
+
+export interface BeeAgentEvents {
+  joined: { agentId: string; sessionToken: string }
+  disconnected: { reason: string }
+  reconnected: { agentId: string }
+}
 
 export class BeeAgent extends EventEmitter {
-  /** @type {Object} spec */
-  #spec
-  /** @type {Logger} */
-  #logger
-  /** @type {QueenClient|null} */
-  #queenClient = null
-  /** @type {BeeHttpServer|null} */
-  #httpServer = null
-  /** @type {Handshake|null} */
-  #handshake = null
-  /** @type {HeartbeatManager|null} */
-  #heartbeat = null
-  /** @type {Reconnector|null} */
-  #reconnector = null
-  /** @type {TaskManager} */
-  #taskManager
-  /** @type {ToolRegistry} */
-  #toolRegistry
-  /** @type {SkillRegistry} */
-  #skillRegistry
-  /** @type {Function|null} */
-  #modelCaller = null
-  /** @type {string|null} */
-  #sessionToken = null
-  /** @type {string|null} */
-  #agentId = null
-  /** @type {string|null} */
-  #colonyToken = null
-  /** @type {'disconnected'|'joining'|'connected'|'leaving'} */
-  #status = 'disconnected'
+  #spec: BeeSpec
+  readonly #logger: Logger
+  #queenClient: QueenClient | null = null
+  #httpServer: BeeHttpServer | null = null
+  #handshake: Handshake | null = null
+  #heartbeat: HeartbeatManager | null = null
+  #reconnector: Reconnector | null = null
+  readonly #taskManager: TaskManager
+  readonly #toolRegistry: ToolRegistry
+  readonly #skillRegistry: SkillRegistry
+  #modelCaller: ModelCaller | null = null
+  #sessionToken: string | null = null
+  #agentId: string | null = null
+  #colonyToken: string | null = null
+  #status: AgentStatus = 'disconnected'
 
-  /**
-   * @param {Object} spec
-   * @param {Logger} [logger]
-   */
-  constructor(spec, logger) {
+  constructor(spec: BeeSpec, logger?: Logger) {
     super()
     this.#spec = spec
     this.#logger = logger ?? new Logger()
@@ -73,54 +62,29 @@ export class BeeAgent extends EventEmitter {
     })
   }
 
-  /**
-   * 从 bee.yaml 创建 BeeAgent
-   *
-   * @param {string} yamlPath - YAML 文件路径
-   * @param {{logger?: Logger}} [options]
-   * @returns {Promise<BeeAgent>}
-   */
-  static async fromSpec(yamlPath, options = {}) {
+  /** 从 bee.yaml 创建 BeeAgent */
+  static async fromSpec(yamlPath: string, options: { logger?: Logger } = {}): Promise<BeeAgent> {
     const spec = await SpecLoader.load(yamlPath)
     return new BeeAgent(spec, options.logger)
   }
 
-  /**
-   * 注册任务处理器
-   *
-   * @param {string} capability - 能力名称
-   * @param {(ctx: import('./task/task-context.js').TaskContext) => Promise<any>} handler
-   */
-  onTask(capability, handler) {
+  /** 注册任务处理器 */
+  onTask(capability: string, handler: TaskHandler): void {
     this.#taskManager.registerHandler(capability, handler)
   }
 
-  /**
-   * 注册工具
-   *
-   * @param {string} id
-   * @param {Function|Object} handlerOrSchema
-   */
-  registerTool(id, handlerOrSchema) {
+  /** 注册工具 */
+  registerTool(id: string, handlerOrSchema: ((input: unknown) => unknown) | Record<string, unknown>): void {
     this.#toolRegistry.register(id, handlerOrSchema)
   }
 
-  /**
-   * 定义技能
-   *
-   * @param {string} id
-   * @param {Object} config
-   */
-  defineSkill(id, config) {
+  /** 定义技能 */
+  defineSkill(id: string, config: SkillDefinition): void {
     this.#skillRegistry.define(id, config)
   }
 
-  /**
-   * 设置模型调用函数
-   *
-   * @param {Function} fn - async (prompt, options) => any
-   */
-  setModelCaller(fn) {
+  /** 设置模型调用函数 */
+  setModelCaller(fn: ModelCaller): void {
     this.#modelCaller = fn
     this.#taskManager.setModelCaller(fn)
   }
@@ -129,12 +93,8 @@ export class BeeAgent extends EventEmitter {
    * 加入 Colony
    *
    * 执行：启动 HTTP 服务器 → 四步握手 → 启动心跳
-   *
-   * @param {string} queenUrl - Queen 服务地址
-   * @param {string} colonyToken - 共享密钥
-   * @returns {Promise<{agentId: string, sessionToken: string}>}
    */
-  async join(queenUrl, colonyToken) {
+  async join(queenUrl: string, colonyToken: string): Promise<{ agentId: string; sessionToken: string }> {
     if (this.#status !== 'disconnected') {
       throw new BeeError(`Cannot join in state: ${this.#status}`)
     }
@@ -157,7 +117,6 @@ export class BeeAgent extends EventEmitter {
       const { port: actualPort } = await this.#httpServer.start(port)
       const actualEndpoint = `http://127.0.0.1:${actualPort}`
 
-      // 覆盖 spec 中的 endpoint
       this.#spec = { ...this.#spec, runtime: { ...this.#spec.runtime, endpoint: actualEndpoint } }
 
       // 2. 创建 Queen 客户端和握手
@@ -175,7 +134,7 @@ export class BeeAgent extends EventEmitter {
         this.#logger
       )
 
-      this.#heartbeat.on('disconnected', (data) => {
+      this.#heartbeat.on('disconnected', (data: { reason: string }) => {
         this.#logger.warn(`Disconnected: ${data.reason}`)
         this.#status = 'disconnected'
         this.emit('disconnected', data)
@@ -195,12 +154,8 @@ export class BeeAgent extends EventEmitter {
     }
   }
 
-  /**
-   * 优雅离开 Colony
-   *
-   * @returns {Promise<void>}
-   */
-  async leave() {
+  /** 优雅离开 Colony */
+  async leave(): Promise<void> {
     if (this.#status === 'disconnected') return
 
     this.#status = 'leaving'
@@ -210,7 +165,8 @@ export class BeeAgent extends EventEmitter {
         await this.#queenClient.leave(this.#sessionToken)
       }
     } catch (err) {
-      this.#logger.warn(`Leave request failed: ${err.message}`)
+      const message = err instanceof Error ? err.message : String(err)
+      this.#logger.warn(`Leave request failed: ${message}`)
     }
 
     await this.#cleanup()
@@ -218,56 +174,42 @@ export class BeeAgent extends EventEmitter {
     this.emit('disconnected', { reason: 'leave' })
   }
 
-  /**
-   * 强制关闭所有资源
-   */
-  async close() {
+  /** 强制关闭所有资源 */
+  async close(): Promise<void> {
     this.#reconnector?.stop()
     await this.#cleanup()
     this.#status = 'disconnected'
   }
 
-  /**
-   * 获取 Agent ID
-   *
-   * @returns {string|null}
-   */
-  get agentId() {
+  /** 获取 Agent ID */
+  get agentId(): string | null {
     return this.#agentId
   }
 
-  /**
-   * 获取当前状态
-   *
-   * @returns {string}
-   */
-  get status() {
+  /** 获取当前状态 */
+  get status(): AgentStatus {
     return this.#status
   }
 
-  /**
-   * 启动自动重连
-   */
-  #startReconnector() {
-    if (this.#reconnector) return // 已经在重连中
+  #startReconnector(): void {
+    if (this.#reconnector) return
 
     this.#reconnector = new Reconnector({}, this.#logger)
 
-    this.#reconnector.on('reconnected', ({ agentId, sessionToken }) => {
+    this.#reconnector.on('reconnected', ({ agentId, sessionToken }: { agentId: string; sessionToken: string }) => {
       this.#agentId = agentId
       this.#sessionToken = sessionToken
       this.#status = 'connected'
 
-      // 重启心跳
       if (this.#heartbeat) {
         this.#heartbeat.stop()
       }
       this.#heartbeat = new HeartbeatManager(
-        this.#queenClient,
+        this.#queenClient!,
         { intervalMs: (this.#spec.heartbeat?.interval ?? 10) * 1000 },
         this.#logger
       )
-      this.#heartbeat.on('disconnected', (data) => {
+      this.#heartbeat.on('disconnected', (data: { reason: string }) => {
         this.#logger.warn(`Disconnected: ${data.reason}`)
         this.#status = 'disconnected'
         this.emit('disconnected', data)
@@ -279,20 +221,17 @@ export class BeeAgent extends EventEmitter {
       this.#reconnector = null
     })
 
-    this.#reconnector.reconnect(this.#handshake, this.#spec, this.#colonyToken)
-      .catch((err) => {
-        this.#logger.error(`Reconnect failed: ${err.message}`)
+    this.#reconnector.reconnect(this.#handshake!, this.#spec, this.#colonyToken!)
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        this.#logger.error(`Reconnect failed: ${message}`)
         this.#reconnector = null
       })
   }
 
-  /**
-   * 清理所有资源
-   */
-  async #cleanup() {
+  async #cleanup(): Promise<void> {
     this.#heartbeat?.stop()
     await this.#httpServer?.stop()
     this.#sessionToken = null
-    // 不清除 agentId，保留最后一次的身份信息
   }
 }

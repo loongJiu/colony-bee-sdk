@@ -9,7 +9,7 @@
  *   QUEEN_URL=http://127.0.0.1:9009 COLONY_TOKEN=change-me-in-production node examples/simple-agent.mjs
  */
 
-import { BeeAgent } from '../src/index.js'
+import { BeeAgent } from '../src/index.ts'
 
 const QUEEN_URL = process.env.QUEEN_URL || 'http://127.0.0.1:9009'
 const COLONY_TOKEN = process.env.COLONY_TOKEN || 'change-me-in-production'

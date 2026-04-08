@@ -7,33 +7,23 @@
  *   GET  /bee/health - 健康检查
  */
 
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
+import { TaskManager } from '../task/task-manager.js'
+import { Logger } from '../logger.js'
+import type { ServerAddress, TaskAssignPayload, TaskCancelPayload } from '../types.js'
 
 export class BeeHttpServer {
-  /** @type {import('../task/task-manager.js').TaskManager} */
-  #taskManager
-  /** @type {import('../logger.js').Logger} */
-  #logger
-  /** @type {import('node:http').Server|null} */
-  #server = null
+  readonly #taskManager: TaskManager
+  readonly #logger: Logger
+  #server: Server | null = null
 
-  /**
-   * @param {import('../task/task-manager.js').TaskManager} taskManager
-   * @param {import('../logger.js').Logger} logger
-   */
-  constructor(taskManager, logger) {
+  constructor(taskManager: TaskManager, logger: Logger) {
     this.#taskManager = taskManager
     this.#logger = logger.child({ component: 'http-server' })
   }
 
-  /**
-   * 启动 HTTP 服务器
-   *
-   * @param {number} [port=0] - 端口号，0 表示自动分配
-   * @param {string} [host='0.0.0.0'] - 绑定地址
-   * @returns {Promise<{port: number}>}
-   */
-  start(port = 0, host = '0.0.0.0') {
+  /** 启动 HTTP 服务器 */
+  start(port = 0, host = '0.0.0.0'): Promise<{ port: number }> {
     return new Promise((resolve, reject) => {
       this.#server = createServer((req, res) => {
         this.#handleRequest(req, res)
@@ -42,19 +32,15 @@ export class BeeHttpServer {
       this.#server.on('error', reject)
 
       this.#server.listen(port, host, () => {
-        const addr = this.#server.address()
+        const addr = this.#server!.address() as ServerAddress
         this.#logger.info(`HTTP server listening on ${addr.address}:${addr.port}`)
         resolve({ port: addr.port })
       })
     })
   }
 
-  /**
-   * 停止 HTTP 服务器
-   *
-   * @returns {Promise<void>}
-   */
-  stop() {
+  /** 停止 HTTP 服务器 */
+  stop(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.#server) return resolve()
       this.#server.close(() => {
@@ -65,79 +51,68 @@ export class BeeHttpServer {
     })
   }
 
-  /**
-   * 获取服务器地址信息
-   *
-   * @returns {{port: number, address: string}|null}
-   */
-  get address() {
+  /** 获取服务器地址信息 */
+  get address(): ServerAddress | null {
     if (!this.#server) return null
-    return this.#server.address()
+    return this.#server.address() as ServerAddress
   }
 
-  /**
-   * 处理 HTTP 请求
-   *
-   * @param {import('node:http').IncomingMessage} req
-   * @param {import('node:http').ServerResponse} res
-   */
-  #handleRequest(req, res) {
-    // CORS
+  #handleRequest(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204)
-      return res.end()
+      res.end()
+      return
     }
 
-    const url = new URL(req.url, `http://${req.headers.host}`)
+    const url = new URL(req.url!, `http://${req.headers.host}`)
 
     if (req.method === 'POST' && url.pathname === '/bee/task') {
-      return this.#handleTask(req, res)
+      this.#handleTask(req, res)
+      return
     }
 
     if (req.method === 'POST' && url.pathname === '/bee/cancel') {
-      return this.#handleCancel(req, res)
+      this.#handleCancel(req, res)
+      return
     }
 
     if (req.method === 'GET' && url.pathname === '/bee/health') {
-      return this.#handleHealth(req, res)
+      this.#handleHealth(req, res)
+      return
     }
 
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Not Found' }))
   }
 
-  /**
-   * 处理 POST /bee/task
-   */
-  async #handleTask(req, res) {
+  async #handleTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
-      const payload = await this.#readBody(req)
-      this.#logger.info(`Task assigned: ${payload.task?.task_id ?? 'unknown'}`)
+      const payload = await this.#readBody(req) as TaskAssignPayload
+      const taskId = payload.task?.task_id ?? 'unknown'
+      this.#logger.info(`Task assigned: ${taskId}`)
 
       const result = await this.#taskManager.handleTaskAssign(payload)
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(result))
     } catch (err) {
-      this.#logger.error(`Task error: ${err.message}`)
+      const message = err instanceof Error ? err.message : String(err)
+      this.#logger.error(`Task error: ${message}`)
       res.writeHead(500, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({
         status: 'failure',
-        error: { code: 'ERR_UNKNOWN', message: err.message, retryable: true }
+        error: { code: 'ERR_UNKNOWN', message, retryable: true }
       }))
     }
   }
 
-  /**
-   * 处理 POST /bee/cancel
-   */
-  async #handleCancel(req, res) {
+  async #handleCancel(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
-      const payload = await this.#readBody(req)
+      const payload = await this.#readBody(req) as TaskCancelPayload
       this.#logger.info(`Cancel request: ${payload.task_id ?? 'unknown'}`)
       this.#taskManager.handleTaskCancel(payload)
     } catch { /* ignore parse errors on cancel */ }
@@ -146,10 +121,7 @@ export class BeeHttpServer {
     res.end(JSON.stringify({ status: 'cancelled' }))
   }
 
-  /**
-   * 处理 GET /bee/health
-   */
-  #handleHealth(_req, res) {
+  #handleHealth(_req: IncomingMessage, res: ServerResponse): void {
     const stats = this.#taskManager.getStats()
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
@@ -160,19 +132,13 @@ export class BeeHttpServer {
     }))
   }
 
-  /**
-   * 读取请求体 JSON
-   *
-   * @param {import('node:http').IncomingMessage} req
-   * @returns {Promise<Object>}
-   */
-  #readBody(req) {
+  #readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
       let body = ''
-      req.on('data', (chunk) => { body += chunk })
+      req.on('data', (chunk: Buffer) => { body += chunk })
       req.on('end', () => {
         try {
-          resolve(body ? JSON.parse(body) : {})
+          resolve(body ? JSON.parse(body) as Record<string, unknown> : {})
         } catch (err) {
           reject(err)
         }

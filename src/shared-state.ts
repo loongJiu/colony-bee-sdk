@@ -5,13 +5,10 @@
  */
 
 export class SharedState {
-  /** @type {Map<string, any>} */
-  #data = new Map()
+  readonly #data: Map<string, unknown>
 
-  /**
-   * @param {Object} [initialData] - 初始数据
-   */
-  constructor(initialData) {
+  constructor(initialData?: Record<string, unknown>) {
+    this.#data = new Map()
     if (initialData && typeof initialData === 'object') {
       for (const [key, value] of Object.entries(initialData)) {
         this.#data.set(key, value)
@@ -19,34 +16,19 @@ export class SharedState {
     }
   }
 
-  /**
-   * @param {string} key
-   * @returns {any}
-   */
-  get(key) {
+  get(key: string): unknown {
     return this.#data.get(key)
   }
 
-  /**
-   * @param {string} key
-   * @param {*} value
-   */
-  set(key, value) {
+  set(key: string, value: unknown): void {
     this.#data.set(key, value)
   }
 
-  /**
-   * @param {string} key
-   * @returns {boolean}
-   */
-  delete(key) {
+  delete(key: string): boolean {
     return this.#data.delete(key)
   }
 
-  /**
-   * @returns {Object}
-   */
-  toJSON() {
+  toJSON(): Record<string, unknown> {
     return Object.fromEntries(this.#data)
   }
 }

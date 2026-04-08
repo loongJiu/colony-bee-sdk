@@ -26,7 +26,7 @@ export const BeeSpecSchema = z.object({
     protocol: z.literal('http').optional().default('http')
   }).optional().default({}),
   capabilities: z.array(z.string()).min(1),
-  model: z.object({ name: z.string() }).passthrough().optional().default({}),
+  model: z.object({ name: z.string() }).passthrough().optional().default(undefined as any),
   tools: z.array(z.object({ id: z.string() }).passthrough()).optional().default([]),
   skills: z.array(z.object({ id: z.string() }).passthrough()).optional().default([]),
   constraints: z.object({
@@ -40,17 +40,14 @@ export const BeeSpecSchema = z.object({
   }).optional().default({})
 })
 
+export type BeeSpec = z.infer<typeof BeeSpecSchema>
+
 export class SpecLoader {
-  /**
-   * 加载并校验 bee.yaml
-   *
-   * @param {string} yamlPath - YAML 文件路径
-   * @returns {Promise<z.infer<typeof BeeSpecSchema>>}
-   */
-  static async load(yamlPath) {
+  /** 加载并校验 bee.yaml */
+  static async load(yamlPath: string): Promise<BeeSpec> {
     const absPath = resolve(yamlPath)
     const content = await readFile(absPath, 'utf-8')
-    const raw = yaml.load(content)
+    const raw = yaml.load(content) as unknown
     const spec = BeeSpecSchema.parse(raw)
     return spec
   }

@@ -4,9 +4,6 @@
  * 与 colony-queen 错误体系对齐
  */
 
-/**
- * SDK 错误码
- */
 export const ErrorCodes = {
   ERR_TIMEOUT: 'ERR_TIMEOUT',
   ERR_TASK_CANCELLED: 'ERR_TASK_CANCELLED',
@@ -17,80 +14,62 @@ export const ErrorCodes = {
   ERR_HANDSHAKE: 'ERR_HANDSHAKE',
   ERR_CONNECTION: 'ERR_CONNECTION',
   ERR_UNAUTHORIZED: 'ERR_UNAUTHORIZED'
-}
+} as const
 
-/**
- * SDK 基础错误类
- */
+export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes]
+
 export class BeeError extends Error {
-  /** @type {string} */
-  code
-  /** @type {boolean} */
-  retryable
+  override name: string = 'BeeError'
+  readonly code: ErrorCode
+  readonly retryable: boolean
 
-  /**
-   * @param {string} message
-   * @param {string} [code]
-   * @param {boolean} [retryable]
-   */
-  constructor(message, code = ErrorCodes.ERR_UNKNOWN, retryable = false) {
+  constructor(message: string, code: ErrorCode = ErrorCodes.ERR_UNKNOWN, retryable = false) {
     super(message)
-    this.name = 'BeeError'
     this.code = code
     this.retryable = retryable
   }
 
-  toJSON() {
+  toJSON(): { code: ErrorCode; message: string; retryable: boolean } {
     return { code: this.code, message: this.message, retryable: this.retryable }
   }
 }
 
-/**
- * 握手失败
- */
 export class HandshakeError extends BeeError {
-  constructor(message) {
+  override name = 'HandshakeError'
+
+  constructor(message: string) {
     super(message, ErrorCodes.ERR_HANDSHAKE, false)
-    this.name = 'HandshakeError'
   }
 }
 
-/**
- * 连接错误
- */
 export class ConnectionError extends BeeError {
-  constructor(message, retryable = true) {
+  override name = 'ConnectionError'
+
+  constructor(message: string, retryable = true) {
     super(message, ErrorCodes.ERR_CONNECTION, retryable)
-    this.name = 'ConnectionError'
   }
 }
 
-/**
- * 认证失败
- */
 export class UnauthorizedError extends BeeError {
-  constructor(message) {
+  override name = 'UnauthorizedError'
+
+  constructor(message: string) {
     super(message, ErrorCodes.ERR_UNAUTHORIZED, false)
-    this.name = 'UnauthorizedError'
   }
 }
 
-/**
- * 任务执行错误
- */
 export class TaskError extends BeeError {
-  constructor(message, code = ErrorCodes.ERR_UNKNOWN, retryable = false) {
+  override name = 'TaskError'
+
+  constructor(message: string, code: ErrorCode = ErrorCodes.ERR_UNKNOWN, retryable = false) {
     super(message, code, retryable)
-    this.name = 'TaskError'
   }
 }
 
-/**
- * 超时错误
- */
 export class TimeoutError extends TaskError {
-  constructor(message) {
+  override name = 'TimeoutError'
+
+  constructor(message: string) {
     super(message, ErrorCodes.ERR_TIMEOUT, true)
-    this.name = 'TimeoutError'
   }
 }

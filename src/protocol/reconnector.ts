@@ -5,43 +5,30 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { Logger } from '../logger.js'
+import { Handshake } from './handshake.js'
+import type { BeeSpec } from '../spec-loader.js'
 
 const DEFAULT_BASE_DELAY_MS = 1000
 const DEFAULT_MAX_DELAY_MS = 30_000
 const JITTER_RANGE = 0.2
 
 export class Reconnector extends EventEmitter {
-  /** @type {number} */
-  #baseDelayMs
-  /** @type {number} */
-  #maxDelayMs
-  /** @type {import('../logger.js').Logger} */
-  #logger
-  /** @type {number} */
+  readonly #baseDelayMs: number
+  readonly #maxDelayMs: number
+  readonly #logger: Logger
   #attempt = 0
-  /** @type {boolean} */
   #stopped = false
 
-  /**
-   * @param {{baseDelayMs?: number, maxDelayMs?: number}} [options]
-   * @param {import('../logger.js').Logger} logger
-   */
-  constructor(options = {}, logger) {
+  constructor(options: { baseDelayMs?: number; maxDelayMs?: number } = {}, logger: Logger) {
     super()
     this.#baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS
     this.#maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS
     this.#logger = logger.child({ component: 'reconnector' })
   }
 
-  /**
-   * 尝试重连
-   *
-   * @param {import('./handshake.js').Handshake} handshake
-   * @param {Object} spec
-   * @param {string} colonyToken
-   * @returns {Promise<{agentId: string, sessionToken: string}>}
-   */
-  async reconnect(handshake, spec, colonyToken) {
+  /** 尝试重连 */
+  async reconnect(handshake: Handshake, spec: BeeSpec, colonyToken: string): Promise<{ agentId: string; sessionToken: string }> {
     this.#stopped = false
 
     while (!this.#stopped) {
@@ -60,43 +47,31 @@ export class Reconnector extends EventEmitter {
         this.emit('reconnected', result)
         return result
       } catch (err) {
-        this.#logger.warn(`Reconnect attempt #${this.#attempt} failed: ${err.message}`)
+        const message = err instanceof Error ? err.message : String(err)
+        this.#logger.warn(`Reconnect attempt #${this.#attempt} failed: ${message}`)
       }
     }
 
     throw new Error('Reconnector stopped')
   }
 
-  /**
-   * 重置退避计数
-   */
-  reset() {
+  /** 重置退避计数 */
+  reset(): void {
     this.#attempt = 0
   }
 
-  /**
-   * 停止重连
-   */
-  stop() {
+  /** 停止重连 */
+  stop(): void {
     this.#stopped = true
   }
 
-  /**
-   * 计算退避延迟
-   *
-   * @returns {number} 延迟毫秒数
-   */
-  #calcDelay() {
+  #calcDelay(): number {
     const base = Math.min(this.#baseDelayMs * Math.pow(2, this.#attempt), this.#maxDelayMs)
     const jitter = base * JITTER_RANGE * Math.random()
     return base + jitter
   }
 
-  /**
-   * @param {number} ms
-   * @returns {Promise<void>}
-   */
-  #sleep(ms) {
+  #sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 }

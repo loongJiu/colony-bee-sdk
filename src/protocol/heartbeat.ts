@@ -5,51 +5,36 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { QueenClient } from '../transport/queen-client.js'
+import { Logger } from '../logger.js'
+import type { HeartbeatStats } from '../types.js'
 
 const DEFAULT_INTERVAL_MS = 10_000
 const MAX_CONSECUTIVE_FAILURES = 3
 
 export class HeartbeatManager extends EventEmitter {
-  /** @type {import('../transport/queen-client.js').QueenClient} */
-  #queenClient
-  /** @type {number} */
-  #intervalMs
-  /** @type {import('../logger.js').Logger} */
-  #logger
-  /** @type {NodeJS.Timeout|null} */
-  #timer = null
-  /** @type {string|null} */
-  #sessionToken = null
-  /** @type {() => {activeTasks: number, queueDepth: number, load: number}} */
-  #getStats
-  /** @type {number} */
+  readonly #queenClient: QueenClient
+  readonly #intervalMs: number
+  readonly #logger: Logger
+  #timer: ReturnType<typeof setInterval> | null = null
+  #sessionToken: string | null = null
+  #getStats: (() => HeartbeatStats) | null = null
   #consecutiveFailures = 0
 
-  /**
-   * @param {import('../transport/queen-client.js').QueenClient} queenClient
-   * @param {{intervalMs?: number}} [options]
-   * @param {import('../logger.js').Logger} logger
-   */
-  constructor(queenClient, options = {}, logger) {
+  constructor(queenClient: QueenClient, options: { intervalMs?: number } = {}, logger: Logger) {
     super()
     this.#queenClient = queenClient
     this.#intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
     this.#logger = logger.child({ component: 'heartbeat' })
   }
 
-  /**
-   * 启动心跳
-   *
-   * @param {string} sessionToken
-   * @param {() => {activeTasks: number, queueDepth: number, load: number}} getStats
-   */
-  start(sessionToken, getStats) {
+  /** 启动心跳 */
+  start(sessionToken: string, getStats: () => HeartbeatStats): void {
     this.#sessionToken = sessionToken
     this.#getStats = getStats
     this.#consecutiveFailures = 0
     this.#logger.info(`Heartbeat started (interval: ${this.#intervalMs}ms)`)
 
-    // 立即发送一次
     this.#sendOnce()
 
     this.#timer = setInterval(() => {
@@ -57,10 +42,8 @@ export class HeartbeatManager extends EventEmitter {
     }, this.#intervalMs)
   }
 
-  /**
-   * 停止心跳
-   */
-  stop() {
+  /** 停止心跳 */
+  stop(): void {
     if (this.#timer) {
       clearInterval(this.#timer)
       this.#timer = null
@@ -69,11 +52,9 @@ export class HeartbeatManager extends EventEmitter {
     this.#sessionToken = null
   }
 
-  /**
-   * 发送一次心跳
-   */
-  async #sendOnce() {
-    if (!this.#sessionToken) return
+  /** 发送一次心跳 */
+  async #sendOnce(): Promise<void> {
+    if (!this.#sessionToken || !this.#getStats) return
 
     const stats = this.#getStats()
     try {
@@ -86,7 +67,8 @@ export class HeartbeatManager extends EventEmitter {
       this.#consecutiveFailures = 0
     } catch (err) {
       this.#consecutiveFailures++
-      this.#logger.warn(`Heartbeat failed (${this.#consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${err.message}`)
+      const message = err instanceof Error ? err.message : String(err)
+      this.#logger.warn(`Heartbeat failed (${this.#consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${message}`)
 
       if (this.#consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.#logger.error('Max consecutive heartbeat failures reached')

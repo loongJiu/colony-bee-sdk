@@ -5,42 +5,45 @@
  */
 
 import { TaskContext } from './task-context.js'
-import { ErrorCodes } from '../errors.js'
+import { ErrorCodes, type ErrorCode } from '../errors.js'
+import { Logger } from '../logger.js'
+import { ToolRegistry } from './tool-registry.js'
+import { SkillRegistry } from '../skill-registry.js'
+import type { TaskHandler, ModelCaller, TaskAssignPayload, HeartbeatStats } from '../types.js'
+
+interface TaskResult {
+  status: 'success' | 'failure'
+  output?: unknown
+  summary?: string
+  usage?: { latency_ms: number }
+  error?: {
+    code: ErrorCode
+    message: string
+    retryable: boolean
+  }
+}
 
 export class TaskManager {
-  /** @type {Map<string, Function>} capability → handler */
-  #handlers = new Map()
-  /** @type {Map<string, AbortController>} taskId → AbortController */
-  #activeControllers = new Map()
-  /** @type {number} */
-  #maxConcurrent
-  /** @type {number} */
-  #defaultTimeoutSec
-  /** @type {number} */
-  #queueMax
-  /** @type {import('../logger.js').Logger} */
-  #logger
-  /** @type {import('./tool-registry.js').ToolRegistry} */
-  #toolRegistry
-  /** @type {import('../skill-registry.js').SkillRegistry} */
-  #skillRegistry
-  /** @type {Function|null} */
-  #modelCaller
-  /** @type {import('../logger.js').Logger} */
-  #baseLogger
+  readonly #handlers: Map<string, TaskHandler> = new Map()
+  readonly #activeControllers: Map<string, AbortController> = new Map()
+  readonly #maxConcurrent: number
+  readonly #defaultTimeoutSec: number
+  readonly #queueMax: number
+  readonly #logger: Logger
+  readonly #toolRegistry: ToolRegistry
+  readonly #skillRegistry: SkillRegistry
+  #modelCaller: ModelCaller | null
+  readonly #baseLogger: Logger
 
-  /**
-   * @param {{
-   *   maxConcurrent?: number,
-   *   defaultTimeoutSec?: number,
-   *   queueMax?: number,
-   *   toolRegistry: import('./tool-registry.js').ToolRegistry,
-   *   skillRegistry: import('../skill-registry.js').SkillRegistry,
-   *   modelCaller?: Function|null,
-   *   logger: import('../logger.js').Logger
-   * }} options
-   */
-  constructor(options) {
+  constructor(options: {
+    maxConcurrent?: number
+    defaultTimeoutSec?: number
+    queueMax?: number
+    toolRegistry: ToolRegistry
+    skillRegistry: SkillRegistry
+    modelCaller?: ModelCaller | null
+    logger: Logger
+  }) {
     this.#maxConcurrent = options.maxConcurrent ?? 1
     this.#defaultTimeoutSec = options.defaultTimeoutSec ?? 30
     this.#queueMax = options.queueMax ?? 100
@@ -51,32 +54,18 @@ export class TaskManager {
     this.#logger = options.logger.child({ component: 'task-manager' })
   }
 
-  /**
-   * 设置模型调用器
-   *
-   * @param {Function} fn
-   */
-  setModelCaller(fn) {
+  /** 设置模型调用器 */
+  setModelCaller(fn: ModelCaller): void {
     this.#modelCaller = fn
   }
 
-  /**
-   * 注册 capability handler
-   *
-   * @param {string} capability
-   * @param {Function} handler
-   */
-  registerHandler(capability, handler) {
+  /** 注册 capability handler */
+  registerHandler(capability: string, handler: TaskHandler): void {
     this.#handlers.set(capability, handler)
   }
 
-  /**
-   * 处理任务分配请求
-   *
-   * @param {Object} payload - Queen 发来的 task_assign payload
-   * @returns {Promise<Object>} 标准化的任务结果
-   */
-  async handleTaskAssign(payload) {
+  /** 处理任务分配请求 */
+  async handleTaskAssign(payload: TaskAssignPayload): Promise<TaskResult> {
     const task = payload.task ?? {}
     const context = payload.context ?? {}
     const taskId = task.task_id ?? 'unknown'
@@ -84,7 +73,7 @@ export class TaskManager {
     const timeoutSec = task.constraints?.timeout ?? this.#defaultTimeoutSec
 
     // 查找 handler
-    let handler = null
+    let handler: TaskHandler | null = null
     for (const [cap, h] of this.#handlers) {
       if (capability.includes(cap) || task.description?.includes(cap)) {
         handler = h
@@ -92,11 +81,8 @@ export class TaskManager {
       }
     }
 
-    // 如果没通过描述匹配到，使用第一个注册的 handler（简化匹配）
     if (!handler && this.#handlers.size > 0) {
-      // 尝试用 payload 中的 capability 字段匹配
-      // Queen 发送的 task.description 通常包含能力关键词
-      handler = this.#handlers.values().next().value
+      handler = this.#handlers.values().next().value ?? null
     }
 
     if (!handler) {
@@ -136,7 +122,6 @@ export class TaskManager {
     const startedAt = Date.now()
 
     try {
-      // 创建 TaskContext
       const ctx = new TaskContext({
         taskId,
         capability,
@@ -152,7 +137,6 @@ export class TaskManager {
 
       this.#logger.info(`Executing task ${taskId} (timeout: ${timeoutSec}s)`)
 
-      // 执行 handler
       const output = await handler(ctx)
 
       clearTimeout(timer)
@@ -171,9 +155,8 @@ export class TaskManager {
       const latencyMs = Date.now() - startedAt
       this.#logger.info(`Task ${taskId} completed in ${latencyMs}ms`)
 
-      // 标准化返回格式
-      if (output && typeof output === 'object' && output.status) {
-        return output
+      if (output && typeof output === 'object' && (output as Record<string, unknown>).status) {
+        return output as TaskResult
       }
 
       return {
@@ -196,13 +179,14 @@ export class TaskManager {
         }
       }
 
-      this.#logger.error(`Task ${taskId} failed: ${err.message}`)
+      const message = err instanceof Error ? err.message : String(err)
+      this.#logger.error(`Task ${taskId} failed: ${message}`)
       return {
         status: 'failure',
         error: {
-          code: err.code ?? ErrorCodes.ERR_UNKNOWN,
-          message: err.message ?? 'Unknown error',
-          retryable: err.retryable ?? true
+          code: (err as { code?: ErrorCode }).code ?? ErrorCodes.ERR_UNKNOWN,
+          message: message ?? 'Unknown error',
+          retryable: (err as { retryable?: boolean }).retryable ?? true
         }
       }
     } finally {
@@ -210,12 +194,8 @@ export class TaskManager {
     }
   }
 
-  /**
-   * 处理任务取消
-   *
-   * @param {{task_id?: string}} payload
-   */
-  handleTaskCancel(payload) {
+  /** 处理任务取消 */
+  handleTaskCancel(payload: { task_id?: string }): void {
     const taskId = payload?.task_id
     if (!taskId) return
 
@@ -226,12 +206,8 @@ export class TaskManager {
     }
   }
 
-  /**
-   * 获取当前状态统计
-   *
-   * @returns {{activeTasks: number, queueDepth: number, load: number}}
-   */
-  getStats() {
+  /** 获取当前状态统计 */
+  getStats(): HeartbeatStats {
     const activeTasks = this.#activeControllers.size
     return {
       activeTasks,

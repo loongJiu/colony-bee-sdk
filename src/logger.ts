@@ -4,77 +4,57 @@
  * 支持 child logger 和四级别日志输出
  */
 
-const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 }
+const LEVELS = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3
+} as const
+
+type LogLevel = keyof typeof LEVELS
+
+interface LoggerOptions {
+  level?: LogLevel
+  output?: Pick<Console, 'log' | 'warn' | 'error'>
+}
+
+type LoggerBindings = Record<string, string>
 
 export class Logger {
-  /** @type {string} */
-  #level
-  /** @type {Object} */
-  #bindings
-  /** @type {Console} */
-  #output
+  readonly #level: LogLevel
+  readonly #bindings: LoggerBindings
+  readonly #output: Pick<Console, 'log' | 'warn' | 'error'>
 
-  /**
-   * @param {{ level?: string, output?: Console }} [options]
-   * @param {Object} [bindings]
-   */
-  constructor(options = {}, bindings = {}) {
+  constructor(options: LoggerOptions = {}, bindings: LoggerBindings = {}) {
     this.#level = options.level ?? 'info'
     this.#bindings = bindings
     this.#output = options.output ?? console
   }
 
-  /**
-   * 创建子日志器
-   *
-   * @param {Object} bindings
-   * @returns {Logger}
-   */
-  child(bindings) {
+  child(bindings: LoggerBindings): Logger {
     return new Logger(
       { level: this.#level, output: this.#output },
       { ...this.#bindings, ...bindings }
     )
   }
 
-  /**
-   * @param {string} msg
-   * @param {Object} [data]
-   */
-  debug(msg, data) {
+  debug(msg: string, data?: Record<string, unknown>): void {
     this.#log('debug', msg, data)
   }
 
-  /**
-   * @param {string} msg
-   * @param {Object} [data]
-   */
-  info(msg, data) {
+  info(msg: string, data?: Record<string, unknown>): void {
     this.#log('info', msg, data)
   }
 
-  /**
-   * @param {string} msg
-   * @param {Object} [data]
-   */
-  warn(msg, data) {
+  warn(msg: string, data?: Record<string, unknown>): void {
     this.#log('warn', msg, data)
   }
 
-  /**
-   * @param {string} msg
-   * @param {Object} [data]
-   */
-  error(msg, data) {
+  error(msg: string, data?: Record<string, unknown>): void {
     this.#log('error', msg, data)
   }
 
-  /**
-   * @param {string} level
-   * @param {string} msg
-   * @param {Object} [data]
-   */
-  #log(level, msg, data) {
+  #log(level: LogLevel, msg: string, data?: Record<string, unknown>): void {
     if (LEVELS[level] < LEVELS[this.#level]) return
     const prefix = Object.keys(this.#bindings).length > 0
       ? `[${Object.values(this.#bindings).join(' ')}]`
