@@ -8,7 +8,7 @@ import { request } from 'node:http'
 
 const logger = new Logger({ level: 'warn', output: { log: vi.fn(), warn: vi.fn(), error: vi.fn() } })
 
-function createServer() {
+function createServer(authConfig?: { type: 'bearer' | 'hmac'; secret: string }) {
   const tools = new ToolRegistry()
   const skills = new SkillRegistry()
   const taskManager = new TaskManager({
@@ -20,10 +20,10 @@ function createServer() {
   })
   taskManager.registerHandler('test', async (ctx) => ({ result: 'ok', taskId: ctx.taskId }))
 
-  return { server: new BeeHttpServer(taskManager, logger), taskManager, tools, skills }
+  return { server: new BeeHttpServer(taskManager, logger, authConfig), taskManager, tools, skills }
 }
 
-function fetch(server: BeeHttpServer, method: string, path: string, body?: unknown): Promise<{ status: number; data: any }> {
+function fetch(server: BeeHttpServer, method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<{ status: number; data: any }> {
   const addr = server.address!
   return new Promise((resolve, reject) => {
     const opts = {
@@ -31,7 +31,7 @@ function fetch(server: BeeHttpServer, method: string, path: string, body?: unkno
       port: addr!.port,
       path,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...headers }
     }
     const req = request(opts, (res) => {
       let data = ''
@@ -122,6 +122,47 @@ describe('BeeHttpServer', () => {
         resolve()
       })
       req.end()
+    })
+  })
+
+  describe('端点认证', () => {
+    it('bearer 认证 - 无 Authorization 头返回 401', async () => {
+      ctx = createServer({ type: 'bearer', secret: 'test-secret' })
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', {
+        task: { task_id: 't1', name: 'test', input: 'hello' }
+      })
+      expect(res.status).toBe(401)
+    })
+
+    it('bearer 认证 - 错误 token 返回 401', async () => {
+      ctx = createServer({ type: 'bearer', secret: 'test-secret' })
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', {
+        task: { task_id: 't1', name: 'test', input: 'hello' }
+      }, { Authorization: 'Bearer wrong-secret' })
+      expect(res.status).toBe(401)
+    })
+
+    it('bearer 认证 - 正确 token 放行', async () => {
+      ctx = createServer({ type: 'bearer', secret: 'test-secret' })
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', {
+        task: { task_id: 't1', name: 'test', input: 'hello' }
+      }, { Authorization: 'Bearer test-secret' })
+      expect(res.status).toBe(200)
+      expect(res.data.status).toBe('success')
+    })
+
+    it('GET /bee/health 不需要认证', async () => {
+      ctx = createServer({ type: 'bearer', secret: 'test-secret' })
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'GET', '/bee/health')
+      expect(res.status).toBe(200)
     })
   })
 })

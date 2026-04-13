@@ -109,4 +109,69 @@ describe('SpecLoader.load', () => {
   it('文件不存在时抛错', async () => {
     await expect(SpecLoader.load('/nonexistent/bee.yaml')).rejects.toThrow()
   })
+
+  it('环境变量插值 ${VAR}', async () => {
+    process.env.TEST_BEE_NAME = 'env-agent'
+    await mkdir(fixtureDir, { recursive: true })
+    const yamlPath = join(fixtureDir, 'bee-env.yaml')
+    await writeFile(yamlPath, [
+      'identity:',
+      '  role: worker',
+      '  name: ${TEST_BEE_NAME}',
+      'capabilities:',
+      '  - test',
+    ].join('\n'))
+
+    try {
+      const spec = await SpecLoader.load(yamlPath)
+      expect(spec.identity.name).toBe('env-agent')
+    } finally {
+      delete process.env.TEST_BEE_NAME
+      await rm(fixtureDir, { recursive: true })
+    }
+  })
+
+  it('环境变量插值 ${VAR:-default}', async () => {
+    delete process.env.TEST_MISSING_VAR
+    await mkdir(fixtureDir, { recursive: true })
+    const yamlPath = join(fixtureDir, 'bee-default.yaml')
+    await writeFile(yamlPath, [
+      'identity:',
+      '  role: worker',
+      '  name: ${TEST_MISSING_VAR:-fallback-name}',
+      'capabilities:',
+      '  - test',
+    ].join('\n'))
+
+    try {
+      const spec = await SpecLoader.load(yamlPath)
+      expect(spec.identity.name).toBe('fallback-name')
+    } finally {
+      await rm(fixtureDir, { recursive: true })
+    }
+  })
+
+  it('security 配置通过校验', async () => {
+    await mkdir(fixtureDir, { recursive: true })
+    const yamlPath = join(fixtureDir, 'bee-sec.yaml')
+    await writeFile(yamlPath, [
+      'identity:',
+      '  role: worker',
+      '  name: sec-agent',
+      'capabilities:',
+      '  - test',
+      'security:',
+      '  endpoint_auth:',
+      '    type: bearer',
+      '    secret: my-secret',
+    ].join('\n'))
+
+    try {
+      const spec = await SpecLoader.load(yamlPath)
+      expect(spec.security?.endpoint_auth?.type).toBe('bearer')
+      expect(spec.security?.endpoint_auth?.secret).toBe('my-secret')
+    } finally {
+      await rm(fixtureDir, { recursive: true })
+    }
+  })
 })

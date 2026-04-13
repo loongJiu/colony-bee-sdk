@@ -5,6 +5,7 @@
  */
 
 import type { TaskContext } from './task/task-context.js'
+import type { ErrorCode } from './errors.js'
 
 /** Agent 连接状态 */
 export type AgentStatus = 'disconnected' | 'joining' | 'connected' | 'leaving'
@@ -15,16 +16,96 @@ export type TaskHandler = (ctx: TaskContext) => Promise<unknown>
 /** 模型调用函数签名 */
 export type ModelCaller = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>
 
+/** 流式模型调用函数签名 */
+export type StreamingModelCaller = (
+  prompt: string,
+  options: Record<string, unknown> & { stream: true },
+  onChunk: (chunk: string) => void,
+) => Promise<ModelResponse>
+
+/** 模型停止原因 */
+export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence'
+
+/** 工具调用 */
+export interface ToolCall {
+  /** 工具调用 ID（用于匹配 tool result） */
+  id: string
+  /** 工具名称 */
+  name: string
+  /** 工具输入（已解析） */
+  input: unknown
+  /** 工具执行结果 */
+  result?: unknown
+  /** 工具执行错误 */
+  error?: string
+}
+
+/** 模型调用响应（结构化） */
+export interface ModelResponse {
+  /** 文本响应 */
+  content: string
+  /** 工具调用列表（如有） */
+  toolCalls?: ToolCall[]
+  /** token 消耗 */
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+  }
+  /** 停止原因 */
+  stopReason: StopReason
+  /** 模型返回的原始数据（用于调试） */
+  raw?: unknown
+}
+
 /** 任务执行结果 */
 export interface TaskResult {
   status: 'success' | 'failure'
   output?: unknown
   summary?: string
-  usage?: { latency_ms: number }
+  usage?: {
+    latency_ms: number
+    tokenUsage?: TokenUsage
+    toolsInvoked?: string[]
+    iterationsCount?: number
+  }
   error?: {
-    code: string
+    code: ErrorCode
     message: string
     retryable: boolean
+  }
+}
+
+/** Token 消耗统计 */
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
+/** 结构化任务结果（类型化输出 + 自动收集的元数据） */
+export interface StructuredTaskResult<T = unknown> {
+  /** 任务输出数据 */
+  data: T
+  /** 任务元数据（自动收集） */
+  meta: {
+    durationMs: number
+    tokenUsage?: TokenUsage
+    toolsInvoked?: string[]
+    iterationsCount?: number
+  }
+  /** 可选的人类可读摘要 */
+  summary?: string
+}
+
+/** 工具 JSON Schema（供 LLM 调用，兼容 OpenAI / Anthropic 格式） */
+export interface ToolSchema {
+  name: string
+  description?: string
+  parameters: {
+    type: 'object'
+    properties: Record<string, unknown>
+    required?: string[]
   }
 }
 
@@ -32,6 +113,9 @@ export interface TaskResult {
 export interface ToolDefinition {
   handler?: (input: unknown) => unknown | Promise<unknown>
   schema?: Record<string, unknown>
+  description?: string
+  inputSchema?: import('zod').ZodType
+  outputSchema?: import('zod').ZodType
 }
 
 /** 技能定义 */
@@ -41,6 +125,20 @@ export interface SkillDefinition {
   description?: string
   [key: string]: unknown
 }
+
+/** 可替换日志接口（兼容 pino / winston / console 等） */
+export interface ExternalLogger {
+  debug(msg: string, meta?: object): void
+  info(msg: string, meta?: object): void
+  warn(msg: string, meta?: object): void
+  error(msg: string, meta?: object): void
+}
+
+/** 队列调度策略 */
+export type QueueStrategy = 'fifo' | 'priority'
+
+/** 任务优先级 */
+export type TaskPriority = 'high' | 'normal' | 'low'
 
 /** 心跳上报统计 */
 export interface HeartbeatStats {

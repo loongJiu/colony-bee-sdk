@@ -8,17 +8,26 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { TaskManager } from '../task/task-manager.js'
 import { Logger } from '../logger.js'
 import type { ServerAddress, TaskAssignPayload, TaskCancelPayload } from '../types.js'
 
+/** 端点认证配置 */
+export interface EndpointAuthConfig {
+  type: 'bearer' | 'hmac'
+  secret: string
+}
+
 export class BeeHttpServer {
   readonly #taskManager: TaskManager
   readonly #logger: Logger
+  readonly #authConfig: EndpointAuthConfig | null
   #server: Server | null = null
 
-  constructor(taskManager: TaskManager, logger: Logger) {
+  constructor(taskManager: TaskManager, logger: Logger, authConfig?: EndpointAuthConfig) {
     this.#taskManager = taskManager
+    this.#authConfig = authConfig ?? null
     this.#logger = logger.child({ component: 'http-server' })
   }
 
@@ -60,11 +69,19 @@ export class BeeHttpServer {
   #handleRequest(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204)
       res.end()
+      return
+    }
+
+    // 端点认证检查（仅对 POST 端点生效）
+    if (req.method === 'POST' && this.#authConfig && !this.#authenticate(req)) {
+      this.#logger.warn(`Unauthorized request to ${req.url}`)
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Unauthorized' }))
       return
     }
 
@@ -87,6 +104,34 @@ export class BeeHttpServer {
 
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Not Found' }))
+  }
+
+  /** 验证请求认证 */
+  #authenticate(req: IncomingMessage): boolean {
+    const authHeader = req.headers.authorization
+    if (!authHeader) return false
+
+    if (this.#authConfig!.type === 'bearer') {
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+      return this.#safeEqual(token, this.#authConfig!.secret)
+    }
+
+    if (this.#authConfig!.type === 'hmac') {
+      // HMAC 认证：Authorization: HMAC <signature>
+      const signature = authHeader.startsWith('HMAC ') ? authHeader.slice(5) : ''
+      return this.#safeEqual(signature, this.#authConfig!.secret)
+    }
+
+    return false
+  }
+
+  /** 时序安全比较，通过 HMAC 摘要避免长度泄露 */
+  #safeEqual(a: string, b: string): boolean {
+    // 使用固定密钥对双方取 HMAC 摘要，消除长度差异
+    const key = 'colony-bee-sdk-timing-safe'
+    const digestA = createHmac('sha256', key).update(a).digest()
+    const digestB = createHmac('sha256', key).update(b).digest()
+    return timingSafeEqual(digestA, digestB)
   }
 
   async #handleTask(req: IncomingMessage, res: ServerResponse): Promise<void> {

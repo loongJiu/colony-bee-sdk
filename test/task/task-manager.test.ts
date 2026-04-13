@@ -40,8 +40,8 @@ describe('TaskManager', () => {
     expect((result as { error: { code: string } }).error.code).toBe(ErrorCodes.ERR_NO_HANDLER)
   })
 
-  it('并发超限时返回 ERR_OVERLOADED', async () => {
-    const mgr = createManager({ maxConcurrent: 1 })
+  it('并发超限且队列满时返回 ERR_OVERLOADED', async () => {
+    const mgr = createManager({ maxConcurrent: 1, queueMax: 0 })
     mgr.registerHandler('cap', async () => {
       await new Promise((r) => setTimeout(r, 100))
       return 'done'
@@ -52,7 +52,7 @@ describe('TaskManager', () => {
       task: { task_id: 't1', name: 'cap' }
     })
 
-    // 第二个任务应被拒绝
+    // 第二个任务应被拒绝（queueMax = 0）
     const result = await mgr.handleTaskAssign({
       task: { task_id: 't2', name: 'cap' }
     })
@@ -150,12 +150,13 @@ describe('TaskManager', () => {
     expect((result as { error: { message: string } }).error.message).toBe('boom')
   })
 
-  it('无 task 字段时使用默认值', async () => {
+  it('无 task 字段时返回 ERR_NO_HANDLER', async () => {
     const mgr = createManager()
     mgr.registerHandler('cap', async (ctx) => ctx.taskId)
 
     const result = await mgr.handleTaskAssign({})
-    // 没有匹配的 capability name，但会用 fallback handler
-    expect(result.status).toBe('success')
+    // 精确匹配：空 capability 不匹配任何已注册 handler
+    expect(result.status).toBe('failure')
+    expect((result as { error: { code: string } }).error.code).toBe(ErrorCodes.ERR_NO_HANDLER)
   })
 })

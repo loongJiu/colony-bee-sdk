@@ -4,7 +4,7 @@
  * 封装所有向 Queen 发起的 HTTP 请求
  */
 
-import { ConnectionError, UnauthorizedError } from '../errors.js'
+import { ConnectionError, HandshakeError, UnauthorizedError } from '../errors.js'
 import { Logger } from '../logger.js'
 import type { BeeSpec } from '../spec-loader.js'
 import type { JoinResponse, VerifyResponse, HeartbeatPayload } from '../types.js'
@@ -20,12 +20,20 @@ export class QueenClient {
 
   /** 发送 join 请求（握手步骤 1） */
   async join(spec: BeeSpec, timestamp: string, signature: string): Promise<JoinResponse> {
-    return this.#post('/colony/join', { spec, timestamp, signature }) as unknown as JoinResponse
+    const data = await this.#post('/colony/join', { spec, timestamp, signature })
+    if (typeof data !== 'object' || data === null || !('nonce' in data)) {
+      throw new HandshakeError('Invalid join response: missing nonce')
+    }
+    return data as unknown as JoinResponse
   }
 
   /** 发送 verify 请求（握手步骤 2） */
   async verify(nonce: string, signedNonce: string): Promise<VerifyResponse> {
-    return this.#post('/colony/verify', { nonce, signed_nonce: signedNonce }) as unknown as VerifyResponse
+    const data = await this.#post('/colony/verify', { nonce, signed_nonce: signedNonce })
+    if (typeof data !== 'object' || data === null || !('agent_id' in data) || !('session_token' in data)) {
+      throw new HandshakeError('Invalid verify response: missing agent_id or session_token')
+    }
+    return data as unknown as VerifyResponse
   }
 
   /** 发送心跳 */
