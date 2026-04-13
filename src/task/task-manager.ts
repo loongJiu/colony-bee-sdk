@@ -9,7 +9,18 @@ import { ErrorCodes, type ErrorCode } from '../errors.js'
 import { Logger } from '../logger.js'
 import { ToolRegistry } from './tool-registry.js'
 import { SkillRegistry } from '../skill-registry.js'
-import type { TaskHandler, ModelCaller, StreamingModelCaller, TaskAssignPayload, HeartbeatStats, StructuredTaskResult, QueueStrategy, TaskPriority, TaskResult } from '../types.js'
+import type {
+  TaskHandler,
+  ModelCaller,
+  StreamingModelCaller,
+  TaskAssignPayload,
+  TaskCancelPayload,
+  HeartbeatStats,
+  StructuredTaskResult,
+  QueueStrategy,
+  TaskPriority,
+  TaskResult
+} from '../types.js'
 
 interface QueuedTask {
   payload: TaskAssignPayload
@@ -121,7 +132,10 @@ export class TaskManager {
 
     // 入队等待
     const priority = (context as Record<string, unknown>).priority as TaskPriority ?? 'normal'
-    this.#logger.info(`Queuing task ${taskId} (priority: ${priority}, queue: ${this.#queue.length})`)
+    this.#logger.info(
+      `Queuing task ${taskId} (priority: ${priority}, queue: ${this.#queue.length})`,
+      this.#trace(payload, taskId)
+    )
 
     return new Promise<TaskResult>((resolve) => {
       this.#queue.push({ payload, priority, enqueuedAt: Date.now(), resolve })
@@ -164,6 +178,7 @@ export class TaskManager {
     const context = payload.context ?? {}
     const taskId = task.task_id ?? 'unknown'
     const capability = task.name ?? task.description ?? ''
+    const trace = this.#trace(payload, taskId)
 
     const abortController = new AbortController()
     this.#activeControllers.set(taskId, abortController)
@@ -183,6 +198,9 @@ export class TaskManager {
         capability,
         input: task.input,
         signal: abortController.signal,
+        requestId: payload.request_id,
+        sessionId: payload.session_id,
+        agentId: payload.agent_id,
         conversationId: context.conversation_id,
         sharedState: context.shared_state,
         toolRegistry: this.#toolRegistry,
@@ -192,7 +210,7 @@ export class TaskManager {
         logger: this.#baseLogger
       })
 
-      this.#logger.info(`Executing task ${taskId} (timeout: ${timeoutSec}s)`)
+      this.#logger.info(`Executing task ${taskId} (timeout: ${timeoutSec}s)`, trace)
 
       if (this.#devMode) {
         this.#logger.debug(`[devMode] Task ${taskId} input: ${JSON.stringify(task.input)}`)
@@ -222,7 +240,7 @@ export class TaskManager {
       }
 
       const latencyMs = Date.now() - startedAt
-      this.#logger.info(`Task ${taskId} completed in ${latencyMs}ms`)
+      this.#logger.info(`Task ${taskId} completed in ${latencyMs}ms`, trace)
 
       // 识别 StructuredTaskResult 格式（含 data 字段）
       if (output && typeof output === 'object' && 'data' in (output as object)) {
@@ -273,7 +291,7 @@ export class TaskManager {
       }
 
       const message = err instanceof Error ? err.message : String(err)
-      this.#logger.error(`Task ${taskId} failed: ${message}`)
+      this.#logger.error(`Task ${taskId} failed: ${message}`, trace)
       return {
         status: 'failure',
         error: {
@@ -290,13 +308,18 @@ export class TaskManager {
   }
 
   /** 处理任务取消 */
-  handleTaskCancel(payload: { task_id?: string }): void {
+  handleTaskCancel(payload: TaskCancelPayload): void {
     const taskId = payload?.task_id
     if (!taskId) return
 
     const controller = this.#activeControllers.get(taskId)
     if (controller) {
-      this.#logger.info(`Cancelling task ${taskId}`)
+      this.#logger.info(`Cancelling task ${taskId}`, {
+        requestId: payload.request_id ?? 'unknown',
+        sessionId: payload.session_id ?? 'unknown',
+        taskId,
+        agentId: payload.agent_id ?? 'unknown',
+      })
       controller.abort()
     }
   }
@@ -308,6 +331,15 @@ export class TaskManager {
       activeTasks,
       queueDepth: this.#queue.length,
       load: activeTasks / this.#maxConcurrent
+    }
+  }
+
+  #trace(payload: TaskAssignPayload, taskId: string): Record<string, unknown> {
+    return {
+      requestId: payload.request_id ?? 'unknown',
+      sessionId: payload.session_id ?? 'unknown',
+      taskId,
+      agentId: payload.agent_id ?? 'unknown',
     }
   }
 }

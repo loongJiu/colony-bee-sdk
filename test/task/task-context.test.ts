@@ -12,6 +12,9 @@ function createContext(opts: Partial<ConstructorParameters<typeof TaskContext>[0
     capability: opts.capability ?? 'test',
     input: opts.input ?? 'input',
     signal: opts.signal ?? new AbortController().signal,
+    requestId: opts.requestId,
+    sessionId: opts.sessionId,
+    agentId: opts.agentId,
     toolRegistry: opts.toolRegistry ?? new ToolRegistry(),
     skillRegistry: opts.skillRegistry ?? new SkillRegistry(),
     modelCaller: opts.modelCaller ?? null,
@@ -192,6 +195,24 @@ describe('TaskContext', () => {
     ctx.progress(50, 'halfway')
     expect(log).toHaveBeenCalledWith(expect.stringContaining('50%'))
     expect(log).toHaveBeenCalledWith(expect.stringContaining('halfway'))
+  })
+
+  it('logger 绑定 request/session/task/agent 字段', () => {
+    const log = vi.fn()
+    const ctx = createContext({
+      taskId: 'task-1',
+      requestId: 'req-1',
+      sessionId: 'sess-1',
+      agentId: 'agent-1',
+      logger: new Logger({ level: 'debug', output: { log, warn: vi.fn(), error: vi.fn() } })
+    })
+
+    ctx.logger.info('trace message')
+    const line = log.mock.calls[0]![0] as string
+    expect(line).toContain('task-1')
+    expect(line).toContain('req-1')
+    expect(line).toContain('sess-1')
+    expect(line).toContain('agent-1')
   })
 
   it('activateSkill 委托给 SkillRegistry', async () => {

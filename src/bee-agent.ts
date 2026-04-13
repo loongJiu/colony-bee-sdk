@@ -212,7 +212,12 @@ export class BeeAgent extends EventEmitter {
 
     try {
       // 1. 启动 HTTP 服务器（传递端点认证配置）
-      this.#httpServer = new BeeHttpServer(this.#taskManager, this.#logger, this.#spec.security?.endpoint_auth)
+      this.#httpServer = new BeeHttpServer(
+        this.#taskManager,
+        this.#logger,
+        this.#spec.security?.endpoint_auth,
+        { healthPath: '/bee/health', agentIdProvider: () => this.#agentId }
+      )
       const endpoint = this.#spec.runtime.endpoint
       let port = 0
       if (endpoint) {
@@ -258,9 +263,14 @@ export class BeeAgent extends EventEmitter {
       // 4. 启动健康检查服务器（可选）
       const hc = this.#spec.runtime.health_check
       if (hc?.enabled) {
-        this.#healthServer = new BeeHttpServer(this.#taskManager, this.#logger)
+        this.#healthServer = new BeeHttpServer(
+          this.#taskManager,
+          this.#logger,
+          undefined,
+          { healthPath: hc.path, agentIdProvider: () => this.#agentId }
+        )
         await this.#healthServer.start(hc.port)
-        this.#logger.info(`Health check server listening on port ${hc.port}`)
+        this.#logger.info(`Health check server listening on port ${hc.port} path ${hc.path}`)
       }
 
       this.#status = 'connected'

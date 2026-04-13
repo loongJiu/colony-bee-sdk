@@ -398,6 +398,13 @@ Agent                          Queen
 npm run test:contracts
 ```
 
+## 健康检查与接入路径
+
+- `runtime.health_check.path` 已支持自定义（例如 `/healthz`）
+- 健康状态返回分级语义：`healthy / degraded / unhealthy`
+- 同时返回 readiness：`ready / not_ready`
+- 集成 runbook（含两条接入路径）：[`docs/integration-runbook.md`](./docs/integration-runbook.md)
+
 ## 测试
 
 ```bash

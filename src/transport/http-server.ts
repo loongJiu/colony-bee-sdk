@@ -28,6 +28,11 @@ export interface EndpointAuthConfig {
   }
 }
 
+export interface BeeHttpServerOptions {
+  healthPath?: string
+  agentIdProvider?: () => string | null
+}
+
 const DEFAULT_HMAC_MAX_SKEW_SECONDS = 300
 const DEFAULT_HMAC_NONCE_TTL_SECONDS = 300
 
@@ -36,12 +41,16 @@ export class BeeHttpServer {
   readonly #logger: Logger
   readonly #authConfig: EndpointAuthConfig | null
   readonly #nonceCache: Map<string, number> = new Map()
+  readonly #healthPath: string
+  readonly #agentIdProvider: (() => string | null) | null
   #server: Server | null = null
 
-  constructor(taskManager: TaskManager, logger: Logger, authConfig?: EndpointAuthConfig) {
+  constructor(taskManager: TaskManager, logger: Logger, authConfig?: EndpointAuthConfig, options: BeeHttpServerOptions = {}) {
     this.#taskManager = taskManager
     this.#authConfig = authConfig ?? null
     this.#logger = logger.child({ component: 'http-server' })
+    this.#healthPath = this.#normalizePath(options.healthPath ?? '/bee/health')
+    this.#agentIdProvider = options.agentIdProvider ?? null
   }
 
   /** 启动 HTTP 服务器 */
@@ -119,7 +128,7 @@ export class BeeHttpServer {
       return
     }
 
-    if (req.method === 'GET' && url.pathname === '/bee/health') {
+    if (req.method === 'GET' && url.pathname === this.#healthPath) {
       this.#handleHealth(req, res)
       return
     }
@@ -202,16 +211,18 @@ export class BeeHttpServer {
       if (!this.#ensureContractCompatible(payload.contract_version, res)) return
 
       const taskId = payload.task?.task_id ?? 'unknown'
-      this.#logger.info(`Task assigned: ${taskId}`)
+      const trace = this.#resolveTrace(payload.request_id, payload.session_id, taskId, payload.agent_id)
+      const traceLogger = this.#logger.child(trace)
+      traceLogger.info(`Task assigned: ${taskId}`)
 
       const result = await this.#taskManager.handleTaskAssign(payload)
       const envelope: TaskResultEnvelope = {
         ...result,
         task_id: taskId,
         contract_version: resolveControlPlaneContractVersion(payload.contract_version),
-        request_id: payload.request_id,
-        session_id: payload.session_id,
-        agent_id: payload.agent_id,
+        request_id: trace.requestId,
+        session_id: trace.sessionId,
+        agent_id: trace.agentId,
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -234,26 +245,30 @@ export class BeeHttpServer {
       payload = this.#parseJsonBody(rawBody) as TaskCancelPayload
       if (!this.#ensureContractCompatible(payload.contract_version, res)) return
 
-      this.#logger.info(`Cancel request: ${payload.task_id ?? 'unknown'}`)
+      const trace = this.#resolveTrace(payload.request_id, payload.session_id, payload.task_id, payload.agent_id)
+      this.#logger.child(trace).info(`Cancel request: ${payload.task_id ?? 'unknown'}`)
       this.#taskManager.handleTaskCancel(payload)
     } catch { /* ignore parse errors on cancel */ }
 
+    const trace = this.#resolveTrace(payload.request_id, payload.session_id, payload.task_id, payload.agent_id)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       status: 'cancelled',
       contract_version: resolveControlPlaneContractVersion(payload.contract_version),
-      request_id: payload.request_id,
-      session_id: payload.session_id,
-      agent_id: payload.agent_id,
+      request_id: trace.requestId,
+      session_id: trace.sessionId,
+      agent_id: trace.agentId,
     }))
   }
 
   #handleHealth(_req: IncomingMessage, res: ServerResponse): void {
     const stats = this.#taskManager.getStats()
+    const health = this.#evaluateHealth(stats.load, stats.queueDepth)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       contract_version: CONTROL_PLANE_CONTRACT_VERSION,
-      status: 'ok',
+      status: health.status,
+      readiness: health.readiness,
       active_tasks: stats.activeTasks,
       queue_depth: stats.queueDepth,
       load: stats.load,
@@ -272,6 +287,35 @@ export class BeeHttpServer {
       expected_major: CONTROL_PLANE_CONTRACT_VERSION.split('.')[0],
     }))
     return false
+  }
+
+  #evaluateHealth(load: number, queueDepth: number): { status: 'healthy' | 'degraded' | 'unhealthy'; readiness: 'ready' | 'not_ready' } {
+    if (load >= 1 && queueDepth > 0) {
+      return { status: 'unhealthy', readiness: 'not_ready' }
+    }
+    if (load >= 0.8 || queueDepth > 0) {
+      return { status: 'degraded', readiness: 'ready' }
+    }
+    return { status: 'healthy', readiness: 'ready' }
+  }
+
+  #resolveTrace(requestId?: string, sessionId?: string, taskId?: string, agentId?: string): {
+    requestId: string
+    sessionId: string
+    taskId: string
+    agentId: string
+  } {
+    return {
+      requestId: requestId ?? 'unknown',
+      sessionId: sessionId ?? 'unknown',
+      taskId: taskId ?? 'unknown',
+      agentId: agentId ?? this.#agentIdProvider?.() ?? 'unknown',
+    }
+  }
+
+  #normalizePath(path: string): string {
+    if (!path.startsWith('/')) return `/${path}`
+    return path
   }
 
   #parseJsonBody(rawBody: string): Record<string, unknown> {

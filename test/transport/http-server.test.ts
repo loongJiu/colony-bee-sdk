@@ -14,7 +14,7 @@ function createServer(authConfig?: {
   type: 'bearer' | 'hmac'
   secret: string
   hmac?: { max_skew_seconds?: number; nonce_ttl_seconds?: number }
-}) {
+}, options?: { healthPath?: string }) {
   const tools = new ToolRegistry()
   const skills = new SkillRegistry()
   const taskManager = new TaskManager({
@@ -26,7 +26,7 @@ function createServer(authConfig?: {
   })
   taskManager.registerHandler('test', async (ctx) => ({ result: 'ok', taskId: ctx.taskId }))
 
-  return { server: new BeeHttpServer(taskManager, logger, authConfig), taskManager, tools, skills }
+  return { server: new BeeHttpServer(taskManager, logger, authConfig, options), taskManager, tools, skills }
 }
 
 function fetch(server: BeeHttpServer, method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<{ status: number; data: any }> {
@@ -97,6 +97,24 @@ describe('BeeHttpServer', () => {
     expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
+  it('task 回包包含 request/session/task/agent 跟踪字段', async () => {
+    ctx = createServer()
+    await ctx.server.start(0)
+
+    const res = await fetch(ctx.server, 'POST', '/bee/task', {
+      request_id: 'req-1',
+      session_id: 'sess-1',
+      agent_id: 'agent-1',
+      task: { task_id: 't-trace', name: 'test', input: 'hello' }
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.data.request_id).toBe('req-1')
+    expect(res.data.session_id).toBe('sess-1')
+    expect(res.data.task_id).toBe('t-trace')
+    expect(res.data.agent_id).toBe('agent-1')
+  })
+
   it('POST /bee/cancel 取消任务', async () => {
     ctx = createServer()
     await ctx.server.start(0)
@@ -113,11 +131,24 @@ describe('BeeHttpServer', () => {
 
     const res = await fetch(ctx.server, 'GET', '/bee/health')
     expect(res.status).toBe(200)
-    expect(res.data.status).toBe('ok')
+    expect(['healthy', 'degraded', 'unhealthy']).toContain(res.data.status)
+    expect(['ready', 'not_ready']).toContain(res.data.readiness)
     expect(res.data).toHaveProperty('active_tasks')
     expect(res.data).toHaveProperty('queue_depth')
     expect(res.data).toHaveProperty('load')
     expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
+  })
+
+  it('自定义 health path 生效', async () => {
+    ctx = createServer(undefined, { healthPath: '/healthz' })
+    await ctx.server.start(0)
+
+    const oldPath = await fetch(ctx.server, 'GET', '/bee/health')
+    expect(oldPath.status).toBe(404)
+
+    const customPath = await fetch(ctx.server, 'GET', '/healthz')
+    expect(customPath.status).toBe(200)
+    expect(customPath.data.status).toBe('healthy')
   })
 
   it('未知路由返回 404', async () => {
