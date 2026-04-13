@@ -16,7 +16,7 @@
 
 ## 特性
 
-- **安全认证** — 四步握手协议（SHA256 + HMAC-SHA256）+ HTTP 端点认证（Bearer / HMAC）
+- **安全认证** — 四步握手协议（HMAC-SHA256）+ HTTP 端点认证（Bearer / HMAC）
 - **自动重连** — 心跳上报 + 指数退避重连
 - **任务管理** — 并发控制、优先级队列、超时管理
 - **工具系统** — Zod Schema 驱动的工具注册，自动生成 LLM 兼容的 JSON Schema
@@ -342,7 +342,7 @@ Agent 与 colony-queen 之间的四步握手：
 ```
 Agent                          Queen
   │                               │
-  │─── Join (spec + SHA256) ─────>│
+  │─── Join (spec + HMAC-SHA256) ─>│
   │<── Challenge (nonce) ─────────│
   │─── Verify (HMAC-SHA256) ────>│
   │<── Welcome (agent_id) ───────│
@@ -351,7 +351,7 @@ Agent                          Queen
   │<══ Task Dispatch (HTTP) ═════│
 ```
 
-1. **Join** — Agent 发送 spec + `SHA256(timestamp + token)` 签名
+1. **Join** — Agent 发送 spec + `HMAC-SHA256(timestamp, token)` 签名
 2. **Challenge** — Queen 返回随机 nonce
 3. **Verify** — Agent 发送 `HMAC-SHA256(nonce, token)` 签名
 4. **Welcome** — Queen 返回 `agent_id` + `session_token`

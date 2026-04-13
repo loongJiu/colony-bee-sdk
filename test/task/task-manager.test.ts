@@ -150,12 +150,13 @@ describe('TaskManager', () => {
     expect((result as { error: { message: string } }).error.message).toBe('boom')
   })
 
-  it('无 task 字段时使用默认值', async () => {
+  it('无 task 字段时返回 ERR_NO_HANDLER', async () => {
     const mgr = createManager()
     mgr.registerHandler('cap', async (ctx) => ctx.taskId)
 
     const result = await mgr.handleTaskAssign({})
-    // 没有匹配的 capability name，但会用 fallback handler
-    expect(result.status).toBe('success')
+    // 精确匹配：空 capability 不匹配任何已注册 handler
+    expect(result.status).toBe('failure')
+    expect((result as { error: { code: string } }).error.code).toBe(ErrorCodes.ERR_NO_HANDLER)
   })
 })

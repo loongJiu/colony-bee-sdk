@@ -3,9 +3,9 @@ import { createHash, createHmac } from 'node:crypto'
 import { signJoin, signNonce } from '../../src/transport/crypto.js'
 
 describe('signJoin', () => {
-  it('返回 SHA256 hex 字符串', () => {
+  it('返回 HMAC-SHA256 hex 字符串', () => {
     const result = signJoin('1234567890', 'my-token')
-    const expected = createHash('sha256').update('1234567890my-token').digest('hex')
+    const expected = createHmac('sha256', 'my-token').update('1234567890').digest('hex')
     expect(result).toBe(expected)
   })
 

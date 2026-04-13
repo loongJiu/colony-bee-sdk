@@ -6,12 +6,12 @@
  * - verify 阶段：HMAC-SHA256(nonce, token)
  */
 
-import { createHash, createHmac } from 'node:crypto'
+import { createHmac } from 'node:crypto'
 
-/** 生成 join 签名 */
+/** 生成 join 签名（HMAC-SHA256，避免长度扩展攻击） */
 export function signJoin(timestamp: string, token: string): string {
-  return createHash('sha256')
-    .update(timestamp + token)
+  return createHmac('sha256', token)
+    .update(timestamp)
     .digest('hex')
 }
 

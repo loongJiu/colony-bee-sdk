@@ -28,6 +28,9 @@ export class TaskContext<TInput = unknown> {
   #iterationsCount = 0
   #tokenUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
 
+  /** 缓存的工具调用代理（构造时创建一次） */
+  readonly #toolsProxy: Record<string, (input: unknown) => unknown>
+
   constructor(options: {
     taskId: string
     capability: string
@@ -51,11 +54,7 @@ export class TaskContext<TInput = unknown> {
     this.#modelCaller = options.modelCaller ?? null
     this.#streamingModelCaller = options.streamingModelCaller ?? null
     this.logger = options.logger.child({ taskId: options.taskId })
-  }
-
-  /** 工具调用代理（自动追踪调用的工具） */
-  get tools(): Record<string, (input: unknown) => unknown> {
-    return new Proxy({} as Record<string, (input: unknown) => unknown>, {
+    this.#toolsProxy = new Proxy({} as Record<string, (input: unknown) => unknown>, {
       get: (_target: Record<string, (input: unknown) => unknown>, prop: string | symbol): ((input: unknown) => unknown) | undefined => {
         if (typeof prop !== 'string') return undefined
         const tool = this.#toolRegistry.get(prop)
@@ -66,6 +65,11 @@ export class TaskContext<TInput = unknown> {
         }
       }
     })
+  }
+
+  /** 工具调用代理（自动追踪调用的工具） */
+  get tools(): Record<string, (input: unknown) => unknown> {
+    return this.#toolsProxy
   }
 
   /** 调用模型 */

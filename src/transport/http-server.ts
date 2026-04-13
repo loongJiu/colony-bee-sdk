@@ -8,7 +8,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
-import { timingSafeEqual } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { TaskManager } from '../task/task-manager.js'
 import { Logger } from '../logger.js'
 import type { ServerAddress, TaskAssignPayload, TaskCancelPayload } from '../types.js'
@@ -125,14 +125,13 @@ export class BeeHttpServer {
     return false
   }
 
-  /** 时序安全比较，防止 timing attack */
+  /** 时序安全比较，通过 HMAC 摘要避免长度泄露 */
   #safeEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) return false
-    try {
-      return timingSafeEqual(Buffer.from(a), Buffer.from(b))
-    } catch {
-      return false
-    }
+    // 使用固定密钥对双方取 HMAC 摘要，消除长度差异
+    const key = 'colony-bee-sdk-timing-safe'
+    const digestA = createHmac('sha256', key).update(a).digest()
+    const digestB = createHmac('sha256', key).update(b).digest()
+    return timingSafeEqual(digestA, digestB)
   }
 
   async #handleTask(req: IncomingMessage, res: ServerResponse): Promise<void> {

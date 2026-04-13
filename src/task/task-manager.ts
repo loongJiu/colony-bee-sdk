@@ -9,24 +9,7 @@ import { ErrorCodes, type ErrorCode } from '../errors.js'
 import { Logger } from '../logger.js'
 import { ToolRegistry } from './tool-registry.js'
 import { SkillRegistry } from '../skill-registry.js'
-import type { TaskHandler, ModelCaller, StreamingModelCaller, TaskAssignPayload, HeartbeatStats, StructuredTaskResult, QueueStrategy, TaskPriority } from '../types.js'
-
-interface TaskResult {
-  status: 'success' | 'failure'
-  output?: unknown
-  summary?: string
-  usage?: {
-    latency_ms: number
-    tokenUsage?: import('../types.js').TokenUsage
-    toolsInvoked?: string[]
-    iterationsCount?: number
-  }
-  error?: {
-    code: ErrorCode
-    message: string
-    retryable: boolean
-  }
-}
+import type { TaskHandler, ModelCaller, StreamingModelCaller, TaskAssignPayload, HeartbeatStats, StructuredTaskResult, QueueStrategy, TaskPriority, TaskResult } from '../types.js'
 
 interface QueuedTask {
   payload: TaskAssignPayload
@@ -93,6 +76,11 @@ export class TaskManager {
     this.#handlers.set(capability, handler)
   }
 
+  /** 根据 capability 精确查找 handler */
+  #resolveHandler(capability: string): TaskHandler | null {
+    return this.#handlers.get(capability) ?? null
+  }
+
   /** 处理任务分配请求 */
   handleTaskAssign(payload: TaskAssignPayload): Promise<TaskResult> {
     const task = payload.task ?? {}
@@ -101,18 +89,7 @@ export class TaskManager {
     const capability = task.name ?? task.description ?? ''
     const timeoutSec = task.constraints?.timeout ?? this.#defaultTimeoutSec
 
-    // 查找 handler
-    let handler: TaskHandler | null = null
-    for (const [cap, h] of this.#handlers) {
-      if (capability.includes(cap) || task.description?.includes(cap)) {
-        handler = h
-        break
-      }
-    }
-
-    if (!handler && this.#handlers.size > 0) {
-      handler = this.#handlers.values().next().value ?? null
-    }
+    const handler = this.#resolveHandler(capability)
 
     if (!handler) {
       return Promise.resolve({
@@ -170,20 +147,10 @@ export class TaskManager {
     const capability = task.name ?? task.description ?? ''
     const timeoutSec = task.constraints?.timeout ?? this.#defaultTimeoutSec
 
-    // 查找 handler
-    let handler: TaskHandler | null = null
-    for (const [cap, h] of this.#handlers) {
-      if (capability.includes(cap) || task.description?.includes(cap)) {
-        handler = h
-        break
-      }
-    }
-    if (!handler && this.#handlers.size > 0) {
-      handler = this.#handlers.values().next().value ?? null
-    }
+    const handler = this.#resolveHandler(capability)
 
     if (!handler) {
-      next.resolve({ status: 'failure', error: { code: ErrorCodes.ERR_NO_HANDLER, message: `No handler`, retryable: false } })
+      next.resolve({ status: 'failure', error: { code: ErrorCodes.ERR_NO_HANDLER, message: `No handler for capability: ${capability}`, retryable: false } })
       return
     }
 

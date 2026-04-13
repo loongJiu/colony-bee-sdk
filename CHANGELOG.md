@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-04-13
+
+### Security
+
+- **Fixed** join 握手签名从 SHA256 哈希改为 HMAC-SHA256，消除长度扩展攻击风险 (`crypto.ts`)
+- **Fixed** HTTP 端点认证的 `safeEqual` 改为 HMAC 摘要比较，消除密钥长度泄露 (`http-server.ts`)
+- **Fixed** `QueenClient.join()` 和 `verify()` 增加响应结构运行时校验，防止无效数据静默通过 (`queen-client.ts`)
+
+### Bug Fixes
+
+- **Fixed** `TaskManager` handler 匹配从 `String.includes` 子串匹配改为精确匹配，避免误匹配（如 `"text"` 匹配 `"context-processing"`）
+- **Fixed** 移除无匹配 handler 时的不可控 fallback（之前会取 Map 中第一个 handler），现在统一返回 `ERR_NO_HANDLER`
+- **Fixed** 重连器竞态保护：添加 `#reconnecting` 标志位，防止心跳断连事件在重连 catch 之前重复触发导致多个重连流程并行
+
+### Changed
+
+- `TaskResult` 类型统一从 `types.ts` 导出，消除 `task-manager.ts` 中的重复定义
+- `TaskResult.error.code` 类型从 `string` 收紧为 `ErrorCode`，提升类型安全
+- `TaskManager` 抽取 `#resolveHandler` 私有方法，消除 `handleTaskAssign` 和 `#drainQueue` 中的重复代码
+- `TaskContext.tools` 的 Proxy 从每次 getter 创建改为构造时一次性缓存
+
 ## [1.1.0] - 2026-04-13
 
 ### Iteration 1: 工具系统增强

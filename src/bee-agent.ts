@@ -50,6 +50,7 @@ export class BeeAgent extends EventEmitter {
   #status: AgentStatus = 'disconnected'
   #startedAt = Date.now()
   #reconnectCount = 0
+  #reconnecting = false
 
   constructor(spec: BeeSpec, logger?: Logger | ExternalLogger, devMode?: boolean) {
     super()
@@ -278,8 +279,9 @@ export class BeeAgent extends EventEmitter {
   }
 
   #startReconnector(): void {
-    if (this.#reconnector) return
+    if (this.#reconnector || this.#reconnecting) return
 
+    this.#reconnecting = true
     this.#reconnector = new Reconnector({}, this.#logger)
 
     this.#reconnector.on('reconnected', ({ agentId, sessionToken }: { agentId: string; sessionToken: string }) => {
@@ -308,6 +310,7 @@ export class BeeAgent extends EventEmitter {
       this.emit('reconnected', { agentId })
       this.#reconnectCount++
       this.#reconnector = null
+      this.#reconnecting = false
     })
 
     this.#reconnector.reconnect(this.#handshake!, this.#spec, this.#colonyToken!)
@@ -315,6 +318,7 @@ export class BeeAgent extends EventEmitter {
         const message = err instanceof Error ? err.message : String(err)
         this.#logger.error(`Reconnect failed: ${message}`)
         this.#reconnector = null
+        this.#reconnecting = false
       })
   }
 

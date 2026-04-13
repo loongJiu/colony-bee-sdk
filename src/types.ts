@@ -5,6 +5,7 @@
  */
 
 import type { TaskContext } from './task/task-context.js'
+import type { ErrorCode } from './errors.js'
 
 /** Agent 连接状态 */
 export type AgentStatus = 'disconnected' | 'joining' | 'connected' | 'leaving'
@@ -69,7 +70,7 @@ export interface TaskResult {
     iterationsCount?: number
   }
   error?: {
-    code: string
+    code: ErrorCode
     message: string
     retryable: boolean
   }
