@@ -45,7 +45,12 @@ export const BeeSpecSchema = z.object({
     endpoint_auth: z.object({
       type: z.enum(['bearer', 'hmac']),
       secret: z.string().min(1),
-    }).optional()
+      hmac: z.object({
+        max_skew_seconds: z.number().int().positive().optional().default(300),
+        nonce_ttl_seconds: z.number().int().positive().optional().default(300),
+      }).optional().default({})
+    }).optional(),
+    allow_insecure_endpoint: z.boolean().optional().default(false)
   }).optional().default({}),
   heartbeat: z.object({
     interval: z.number().int().positive().optional().default(10)

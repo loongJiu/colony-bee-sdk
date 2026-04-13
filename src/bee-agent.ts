@@ -90,6 +90,19 @@ export class BeeAgent extends EventEmitter {
     const maxConcurrent = parseInt(process.env.BEE_MAX_CONCURRENT ?? '1', 10)
     const timeoutDefault = parseInt(process.env.BEE_TIMEOUT ?? '30', 10)
     const queueMax = parseInt(process.env.BEE_QUEUE_MAX ?? '100', 10)
+    const endpointAuthType = process.env.BEE_ENDPOINT_AUTH_TYPE
+    const endpointAuthSecret = process.env.BEE_ENDPOINT_AUTH_SECRET
+    const allowInsecureEndpoint = process.env.BEE_ALLOW_INSECURE_ENDPOINT === 'true'
+
+    if (endpointAuthType && endpointAuthType !== 'bearer' && endpointAuthType !== 'hmac') {
+      throw new BeeError('BEE_ENDPOINT_AUTH_TYPE must be "bearer" or "hmac"')
+    }
+    if (endpointAuthType && !endpointAuthSecret) {
+      throw new BeeError('BEE_ENDPOINT_AUTH_SECRET is required when BEE_ENDPOINT_AUTH_TYPE is set')
+    }
+    if (process.env.NODE_ENV === 'production' && !endpointAuthType && !allowInsecureEndpoint) {
+      throw new BeeError('Endpoint authentication is required in production. Set BEE_ENDPOINT_AUTH_TYPE/BEE_ENDPOINT_AUTH_SECRET or BEE_ALLOW_INSECURE_ENDPOINT=true to override.')
+    }
 
     if (capabilities.length === 0) {
       throw new BeeError('BEE_CAPABILITIES environment variable is required (comma-separated)')
@@ -109,7 +122,12 @@ export class BeeAgent extends EventEmitter {
         queue_strategy: 'fifo',
         retry_max: 3,
       },
-      security: {},
+      security: {
+        ...(endpointAuthType && endpointAuthSecret
+          ? { endpoint_auth: { type: endpointAuthType, secret: endpointAuthSecret } }
+          : {}),
+        allow_insecure_endpoint: allowInsecureEndpoint,
+      },
       heartbeat: { interval: 10 },
     }
 
@@ -172,6 +190,12 @@ export class BeeAgent extends EventEmitter {
   async join(queenUrl: string, colonyToken: string): Promise<{ agentId: string; sessionToken: string }> {
     if (this.#status !== 'disconnected') {
       throw new BeeError(`Cannot join in state: ${this.#status}`)
+    }
+    if (process.env.NODE_ENV === 'production'
+      && !this.#spec.security?.endpoint_auth
+      && !this.#spec.security?.allow_insecure_endpoint
+    ) {
+      throw new BeeError('Endpoint authentication is required in production. Configure security.endpoint_auth or explicitly set security.allow_insecure_endpoint=true.')
     }
 
     this.#status = 'joining'

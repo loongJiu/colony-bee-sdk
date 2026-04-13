@@ -1,0 +1,34 @@
+identity:
+  role: worker
+  name: ${BEE_NAME:-prod-worker}
+  description: "Production worker template"
+  tags: [production]
+
+runtime:
+  protocol: http
+  health_check:
+    enabled: true
+    port: ${BEE_HEALTH_PORT:-9010}
+    path: /healthz
+
+capabilities:
+  - code_generation
+
+constraints:
+  max_concurrent: 4
+  timeout_default: 60
+  queue_max: 200
+  queue_strategy: priority
+  retry_max: 3
+
+security:
+  endpoint_auth:
+    type: hmac
+    secret: ${BEE_ENDPOINT_AUTH_SECRET}
+    hmac:
+      max_skew_seconds: 300
+      nonce_ttl_seconds: 300
+  allow_insecure_endpoint: false
+
+heartbeat:
+  interval: 10
