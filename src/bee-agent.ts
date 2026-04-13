@@ -93,8 +93,11 @@ export class BeeAgent extends EventEmitter {
     const endpointAuthType = process.env.BEE_ENDPOINT_AUTH_TYPE
     const endpointAuthSecret = process.env.BEE_ENDPOINT_AUTH_SECRET
     const allowInsecureEndpoint = process.env.BEE_ALLOW_INSECURE_ENDPOINT === 'true'
+    const normalizedEndpointAuthType = endpointAuthType === 'bearer' || endpointAuthType === 'hmac'
+      ? endpointAuthType
+      : undefined
 
-    if (endpointAuthType && endpointAuthType !== 'bearer' && endpointAuthType !== 'hmac') {
+    if (endpointAuthType && !normalizedEndpointAuthType) {
       throw new BeeError('BEE_ENDPOINT_AUTH_TYPE must be "bearer" or "hmac"')
     }
     if (endpointAuthType && !endpointAuthSecret) {
@@ -123,8 +126,14 @@ export class BeeAgent extends EventEmitter {
         retry_max: 3,
       },
       security: {
-        ...(endpointAuthType && endpointAuthSecret
-          ? { endpoint_auth: { type: endpointAuthType, secret: endpointAuthSecret } }
+        ...(normalizedEndpointAuthType && endpointAuthSecret
+          ? {
+            endpoint_auth: {
+              type: normalizedEndpointAuthType,
+              secret: endpointAuthSecret,
+              hmac: { max_skew_seconds: 300, nonce_ttl_seconds: 300 },
+            }
+          }
           : {}),
         allow_insecure_endpoint: allowInsecureEndpoint,
       },

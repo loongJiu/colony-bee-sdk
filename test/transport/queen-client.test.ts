@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { QueenClient } from '../../src/transport/queen-client.js'
 import { Logger } from '../../src/logger.js'
 import { UnauthorizedError, ConnectionError } from '../../src/errors.js'
+import { CONTROL_PLANE_CONTRACT_VERSION } from '../../src/contracts/control-plane.js'
 
 const logger = new Logger({ level: 'warn', output: { log: vi.fn(), warn: vi.fn(), error: vi.fn() } })
 
@@ -32,6 +33,8 @@ describe('QueenClient', () => {
       'http://queen.test/colony/join',
       expect.objectContaining({ method: 'POST' })
     )
+    const joinPayload = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(joinPayload.contract.version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
     expect(result.nonce).toBe('abc123')
   })
 
@@ -58,6 +61,8 @@ describe('QueenClient', () => {
       'http://queen.test/colony/heartbeat',
       expect.objectContaining({ method: 'POST' })
     )
+    const heartbeatPayload = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(heartbeatPayload.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
   it('leave 发送 POST /colony/leave', async () => {
@@ -108,6 +113,16 @@ describe('QueenClient', () => {
     fetchMock.mockRejectedValue(new TypeError('fetch fail'))
 
     await expect(client.join({} as any, '', '')).rejects.toThrow(ConnectionError)
+  })
+
+  it('响应契约主版本不兼容时抛 ConnectionError', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ nonce: 'abc123', expiresAt: '2025-01-01', contract_version: '2.0.0' })
+    })
+
+    await expect(client.join({} as any, 'ts', 'sig')).rejects.toThrow('Incompatible control-plane contract version')
   })
 
   it('去除尾部斜杠', async () => {

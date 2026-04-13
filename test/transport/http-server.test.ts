@@ -6,6 +6,7 @@ import { SkillRegistry } from '../../src/skill-registry.js'
 import { Logger } from '../../src/logger.js'
 import { request } from 'node:http'
 import { createHash, createHmac } from 'node:crypto'
+import { CONTROL_PLANE_CONTRACT_VERSION } from '../../src/contracts/control-plane.js'
 
 const logger = new Logger({ level: 'warn', output: { log: vi.fn(), warn: vi.fn(), error: vi.fn() } })
 
@@ -93,6 +94,7 @@ describe('BeeHttpServer', () => {
     expect(res.status).toBe(200)
     expect(res.data.status).toBe('success')
     expect(res.data.output).toEqual({ result: 'ok', taskId: 't1' })
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
   it('POST /bee/cancel 取消任务', async () => {
@@ -102,6 +104,7 @@ describe('BeeHttpServer', () => {
     const res = await fetch(ctx.server, 'POST', '/bee/cancel', { task_id: 't1' })
     expect(res.status).toBe(200)
     expect(res.data.status).toBe('cancelled')
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
   it('GET /bee/health 返回健康状态', async () => {
@@ -112,7 +115,9 @@ describe('BeeHttpServer', () => {
     expect(res.status).toBe(200)
     expect(res.data.status).toBe('ok')
     expect(res.data).toHaveProperty('active_tasks')
+    expect(res.data).toHaveProperty('queue_depth')
     expect(res.data).toHaveProperty('load')
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
   it('未知路由返回 404', async () => {
@@ -149,6 +154,18 @@ describe('BeeHttpServer', () => {
   })
 
   describe('端点认证', () => {
+    it('task 请求契约主版本不兼容时返回 400', async () => {
+      ctx = createServer()
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', {
+        contract_version: '2.0.0',
+        task: { task_id: 't1', name: 'test', input: 'hello' }
+      })
+      expect(res.status).toBe(400)
+      expect(res.data.error).toContain('Incompatible control-plane contract version')
+    })
+
     it('bearer 认证 - 无 Authorization 头返回 401', async () => {
       ctx = createServer({ type: 'bearer', secret: 'test-secret' })
       await ctx.server.start(0)

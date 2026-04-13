@@ -17,6 +17,21 @@ export {
 } from './errors.js'
 export { Logger } from './logger.js'
 export { SpecLoader, BeeSpecSchema, type BeeSpec } from './spec-loader.js'
+export {
+  CONTROL_PLANE_CONTRACT,
+  CONTROL_PLANE_CONTRACT_VERSION,
+  CONTROL_PLANE_DEPRECATION_WINDOW_DAYS,
+  CONTROL_PLANE_MIN_COMPATIBLE_VERSION,
+  isControlPlaneContractCompatible,
+  resolveControlPlaneContractVersion,
+} from './contracts/control-plane.js'
+export type {
+  ControlPlaneContractDescriptor,
+  TaskEnvelope,
+  TaskResultEnvelope,
+  CancelSignal,
+  HealthPayload,
+} from './contracts/control-plane.js'
 export { SharedState } from './shared-state.js'
 export { TaskContext } from './task/task-context.js'
 export { TaskManager } from './task/task-manager.js'
@@ -43,6 +58,7 @@ export type {
   JoinResponse,
   VerifyResponse,
   HeartbeatPayload,
+  ContractDescriptor,
   TaskAssignPayload,
   TaskCancelPayload,
   ServerAddress,

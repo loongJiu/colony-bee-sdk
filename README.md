@@ -24,6 +24,7 @@
 - **结构化结果** — 泛型 `onTask<TInput, TOutput>` + 自动元数据收集
 - **模型无关** — 通过 `setModelCaller` / `setStreamingModelCaller` 注入任意 LLM
 - **环境变量插值** — bee.yaml 支持 `${VAR}` 和 `${VAR:-default}` 语法
+- **契约版本治理** — 控制面契约版本固定与兼容校验（发布前契约回归）
 - **灵活部署** — 支持 bee.yaml 声明式配置或纯环境变量构建（`fromEnv()`）
 - **开发模式** — `devMode` 开启详细日志、禁用重连，快速定位问题
 - **事件驱动** — 基于 EventEmitter 的生命周期管理
@@ -384,6 +385,18 @@ Agent                          Queen
 4. **Welcome** — Queen 返回 `agent_id` + `session_token`
 
 握手成功后，Agent 自动启动心跳，Queen 通过 HTTP 反向调用 Agent 端点分发任务。
+
+## 控制面契约与兼容矩阵
+
+- 当前契约版本：`1.0.0`（SDK 运行时会校验 `contract_version`）
+- 兼容规则与字段治理：[`docs/control-plane-contract.md`](./docs/control-plane-contract.md)
+- Queen x SDK 兼容矩阵：[`docs/compatibility-matrix.md`](./docs/compatibility-matrix.md)
+
+发布前可执行契约回归门禁：
+
+```bash
+npm run test:contracts
+```
 
 ## 测试
 

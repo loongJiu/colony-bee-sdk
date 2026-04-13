@@ -11,7 +11,12 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { TaskManager } from '../task/task-manager.js'
 import { Logger } from '../logger.js'
-import type { ServerAddress, TaskAssignPayload, TaskCancelPayload } from '../types.js'
+import {
+  CONTROL_PLANE_CONTRACT_VERSION,
+  isControlPlaneContractCompatible,
+  resolveControlPlaneContractVersion,
+} from '../contracts/control-plane.js'
+import type { ServerAddress, TaskAssignPayload, TaskCancelPayload, TaskResultEnvelope } from '../types.js'
 
 /** 端点认证配置 */
 export interface EndpointAuthConfig {
@@ -194,18 +199,29 @@ export class BeeHttpServer {
   async #handleTask(rawBody: string, res: ServerResponse): Promise<void> {
     try {
       const payload = this.#parseJsonBody(rawBody) as TaskAssignPayload
+      if (!this.#ensureContractCompatible(payload.contract_version, res)) return
+
       const taskId = payload.task?.task_id ?? 'unknown'
       this.#logger.info(`Task assigned: ${taskId}`)
 
       const result = await this.#taskManager.handleTaskAssign(payload)
+      const envelope: TaskResultEnvelope = {
+        ...result,
+        task_id: taskId,
+        contract_version: resolveControlPlaneContractVersion(payload.contract_version),
+        request_id: payload.request_id,
+        session_id: payload.session_id,
+        agent_id: payload.agent_id,
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(result))
+      res.end(JSON.stringify(envelope))
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.#logger.error(`Task error: ${message}`)
       res.writeHead(500, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({
+        contract_version: CONTROL_PLANE_CONTRACT_VERSION,
         status: 'failure',
         error: { code: 'ERR_UNKNOWN', message, retryable: true }
       }))
@@ -213,25 +229,49 @@ export class BeeHttpServer {
   }
 
   async #handleCancel(rawBody: string, res: ServerResponse): Promise<void> {
+    let payload: TaskCancelPayload = {}
     try {
-      const payload = this.#parseJsonBody(rawBody) as TaskCancelPayload
+      payload = this.#parseJsonBody(rawBody) as TaskCancelPayload
+      if (!this.#ensureContractCompatible(payload.contract_version, res)) return
+
       this.#logger.info(`Cancel request: ${payload.task_id ?? 'unknown'}`)
       this.#taskManager.handleTaskCancel(payload)
     } catch { /* ignore parse errors on cancel */ }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ status: 'cancelled' }))
+    res.end(JSON.stringify({
+      status: 'cancelled',
+      contract_version: resolveControlPlaneContractVersion(payload.contract_version),
+      request_id: payload.request_id,
+      session_id: payload.session_id,
+      agent_id: payload.agent_id,
+    }))
   }
 
   #handleHealth(_req: IncomingMessage, res: ServerResponse): void {
     const stats = this.#taskManager.getStats()
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
+      contract_version: CONTROL_PLANE_CONTRACT_VERSION,
       status: 'ok',
       active_tasks: stats.activeTasks,
+      queue_depth: stats.queueDepth,
       load: stats.load,
       timestamp: new Date().toISOString()
     }))
+  }
+
+  #ensureContractCompatible(version: string | undefined, res: ServerResponse): boolean {
+    const resolved = resolveControlPlaneContractVersion(version)
+    if (isControlPlaneContractCompatible(resolved)) return true
+
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      error: 'Incompatible control-plane contract version',
+      contract_version: resolved,
+      expected_major: CONTROL_PLANE_CONTRACT_VERSION.split('.')[0],
+    }))
+    return false
   }
 
   #parseJsonBody(rawBody: string): Record<string, unknown> {

@@ -8,6 +8,11 @@ import { ConnectionError, HandshakeError, UnauthorizedError } from '../errors.js
 import { Logger } from '../logger.js'
 import type { BeeSpec } from '../spec-loader.js'
 import type { JoinResponse, VerifyResponse, HeartbeatPayload } from '../types.js'
+import {
+  CONTROL_PLANE_CONTRACT,
+  CONTROL_PLANE_CONTRACT_VERSION,
+  isControlPlaneContractCompatible,
+} from '../contracts/control-plane.js'
 
 export class QueenClient {
   readonly #baseUrl: string
@@ -20,7 +25,12 @@ export class QueenClient {
 
   /** 发送 join 请求（握手步骤 1） */
   async join(spec: BeeSpec, timestamp: string, signature: string): Promise<JoinResponse> {
-    const data = await this.#post('/colony/join', { spec, timestamp, signature })
+    const data = await this.#post('/colony/join', {
+      spec,
+      timestamp,
+      signature,
+      contract: CONTROL_PLANE_CONTRACT,
+    })
     if (typeof data !== 'object' || data === null || !('nonce' in data)) {
       throw new HandshakeError('Invalid join response: missing nonce')
     }
@@ -29,7 +39,11 @@ export class QueenClient {
 
   /** 发送 verify 请求（握手步骤 2） */
   async verify(nonce: string, signedNonce: string): Promise<VerifyResponse> {
-    const data = await this.#post('/colony/verify', { nonce, signed_nonce: signedNonce })
+    const data = await this.#post('/colony/verify', {
+      nonce,
+      signed_nonce: signedNonce,
+      contract_version: CONTROL_PLANE_CONTRACT_VERSION,
+    })
     if (typeof data !== 'object' || data === null || !('agent_id' in data) || !('session_token' in data)) {
       throw new HandshakeError('Invalid verify response: missing agent_id or session_token')
     }
@@ -43,18 +57,26 @@ export class QueenClient {
       status: data.status ?? 'idle',
       load: data.load ?? 0,
       active_tasks: data.active_tasks ?? 0,
-      queue_depth: data.queue_depth ?? 0
+      queue_depth: data.queue_depth ?? 0,
+      contract_version: data.contract_version ?? CONTROL_PLANE_CONTRACT_VERSION,
     })
   }
 
   /** 更新 Agent spec */
   async updateSpec(sessionToken: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.#post('/colony/update', { session_token: sessionToken, patch })
+    return this.#post('/colony/update', {
+      session_token: sessionToken,
+      patch,
+      contract_version: CONTROL_PLANE_CONTRACT_VERSION,
+    })
   }
 
   /** 优雅离线 */
   async leave(sessionToken: string): Promise<Record<string, unknown>> {
-    return this.#post('/colony/leave', { session_token: sessionToken })
+    return this.#post('/colony/leave', {
+      session_token: sessionToken,
+      contract_version: CONTROL_PLANE_CONTRACT_VERSION,
+    })
   }
 
   /** 通用 POST 请求 */
@@ -78,6 +100,7 @@ export class QueenClient {
           res.status >= 500
         )
       }
+      this.#assertContractCompatibility(path, data)
 
       return data
     } catch (err) {
@@ -87,6 +110,15 @@ export class QueenClient {
       const message = err instanceof Error ? err.message : String(err)
       this.#logger.error(`POST ${path} failed: ${message}`)
       throw new ConnectionError(message, true)
+    }
+  }
+
+  #assertContractCompatibility(path: string, data: Record<string, unknown>): void {
+    const contractVersion = typeof data.contract_version === 'string'
+      ? data.contract_version
+      : CONTROL_PLANE_CONTRACT_VERSION
+    if (!isControlPlaneContractCompatible(contractVersion)) {
+      throw new ConnectionError(`Incompatible control-plane contract version "${contractVersion}" from ${path}`, false)
     }
   }
 }
