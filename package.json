@@ -1,6 +1,6 @@
 {
   "name": "colony-bee-sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Colony Bee SDK - Agent 接入 Colony 系统的 TypeScript SDK",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
