@@ -22,12 +22,20 @@ export { TaskContext } from './task/task-context.js'
 export { TaskManager } from './task/task-manager.js'
 export { ToolRegistry } from './task/tool-registry.js'
 export { SkillRegistry } from './skill-registry.js'
+export type { EndpointAuthConfig } from './transport/http-server.js'
 export type {
   AgentStatus,
   TaskHandler,
   ModelCaller,
+  StreamingModelCaller,
+  ModelResponse,
+  StopReason,
   TaskResult,
+  StructuredTaskResult,
+  TokenUsage,
+  ToolCall,
   ToolDefinition,
+  ToolSchema,
   SkillDefinition,
   HeartbeatStats,
   HeartbeatOptions,
@@ -37,5 +45,9 @@ export type {
   HeartbeatPayload,
   TaskAssignPayload,
   TaskCancelPayload,
-  ServerAddress
+  ServerAddress,
+  ExternalLogger,
+  QueueStrategy,
+  TaskPriority
 } from './types.js'
+export type { FullToolDefinition } from './task/tool-registry.js'

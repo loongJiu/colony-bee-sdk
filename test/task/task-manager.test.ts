@@ -40,8 +40,8 @@ describe('TaskManager', () => {
     expect((result as { error: { code: string } }).error.code).toBe(ErrorCodes.ERR_NO_HANDLER)
   })
 
-  it('并发超限时返回 ERR_OVERLOADED', async () => {
-    const mgr = createManager({ maxConcurrent: 1 })
+  it('并发超限且队列满时返回 ERR_OVERLOADED', async () => {
+    const mgr = createManager({ maxConcurrent: 1, queueMax: 0 })
     mgr.registerHandler('cap', async () => {
       await new Promise((r) => setTimeout(r, 100))
       return 'done'
@@ -52,7 +52,7 @@ describe('TaskManager', () => {
       task: { task_id: 't1', name: 'cap' }
     })
 
-    // 第二个任务应被拒绝
+    // 第二个任务应被拒绝（queueMax = 0）
     const result = await mgr.handleTaskAssign({
       task: { task_id: 't2', name: 'cap' }
     })

@@ -21,7 +21,8 @@ import { SkillRegistry } from './skill-registry.js'
 import { Logger } from './logger.js'
 import { BeeError } from './errors.js'
 import type { BeeSpec } from './spec-loader.js'
-import type { AgentStatus, TaskHandler, ModelCaller, SkillDefinition } from './types.js'
+import type { AgentStatus, TaskHandler, ModelCaller, StreamingModelCaller, SkillDefinition, ToolSchema, ExternalLogger } from './types.js'
+import type { FullToolDefinition } from './task/tool-registry.js'
 
 export interface BeeAgentEvents {
   joined: { agentId: string; sessionToken: string }
@@ -32,8 +33,10 @@ export interface BeeAgentEvents {
 export class BeeAgent extends EventEmitter {
   #spec: BeeSpec
   readonly #logger: Logger
+  #devMode: boolean
   #queenClient: QueenClient | null = null
   #httpServer: BeeHttpServer | null = null
+  #healthServer: BeeHttpServer | null = null
   #handshake: Handshake | null = null
   #heartbeat: HeartbeatManager | null = null
   #reconnector: Reconnector | null = null
@@ -45,17 +48,27 @@ export class BeeAgent extends EventEmitter {
   #agentId: string | null = null
   #colonyToken: string | null = null
   #status: AgentStatus = 'disconnected'
+  #startedAt = Date.now()
+  #reconnectCount = 0
 
-  constructor(spec: BeeSpec, logger?: Logger) {
+  constructor(spec: BeeSpec, logger?: Logger | ExternalLogger, devMode?: boolean) {
     super()
     this.#spec = spec
-    this.#logger = logger ?? new Logger()
+    this.#devMode = devMode ?? false
+    this.#logger = this.#devMode
+      ? (logger instanceof Logger ? logger : this.#adaptLogger(logger) || new Logger({ level: 'debug' }))
+      : (logger instanceof Logger ? logger : this.#adaptLogger(logger))
+    if (this.#devMode) {
+      this.#logger.info('[devMode] Development mode enabled - verbose logging, no auto-reconnect')
+    }
     this.#toolRegistry = new ToolRegistry()
     this.#skillRegistry = new SkillRegistry()
     this.#taskManager = new TaskManager({
       maxConcurrent: spec.constraints.max_concurrent,
       defaultTimeoutSec: spec.constraints.timeout_default,
       queueMax: spec.constraints.queue_max,
+      queueStrategy: spec.constraints.queue_strategy,
+      devMode: this.#devMode,
       toolRegistry: this.#toolRegistry,
       skillRegistry: this.#skillRegistry,
       logger: this.#logger
@@ -63,19 +76,75 @@ export class BeeAgent extends EventEmitter {
   }
 
   /** 从 bee.yaml 创建 BeeAgent */
-  static async fromSpec(yamlPath: string, options: { logger?: Logger } = {}): Promise<BeeAgent> {
+  static async fromSpec(yamlPath: string, options: { logger?: Logger | ExternalLogger; devMode?: boolean } = {}): Promise<BeeAgent> {
     const spec = await SpecLoader.load(yamlPath)
-    return new BeeAgent(spec, options.logger)
+    return new BeeAgent(spec, options.logger, options.devMode)
   }
 
-  /** 注册任务处理器 */
-  onTask(capability: string, handler: TaskHandler): void {
-    this.#taskManager.registerHandler(capability, handler)
+  /** 从环境变量创建 BeeAgent（适用于容器化部署） */
+  static fromEnv(): BeeAgent {
+    const role = (process.env.BEE_ROLE ?? 'worker') as 'worker' | 'scout'
+    const name = process.env.BEE_NAME ?? 'env-agent'
+    const capabilities = (process.env.BEE_CAPABILITIES ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const maxConcurrent = parseInt(process.env.BEE_MAX_CONCURRENT ?? '1', 10)
+    const timeoutDefault = parseInt(process.env.BEE_TIMEOUT ?? '30', 10)
+    const queueMax = parseInt(process.env.BEE_QUEUE_MAX ?? '100', 10)
+
+    if (capabilities.length === 0) {
+      throw new BeeError('BEE_CAPABILITIES environment variable is required (comma-separated)')
+    }
+
+    const spec: BeeSpec = {
+      identity: { role, name, description: '', tags: [] },
+      runtime: { protocol: 'http', health_check: { enabled: false, port: 9010, path: '/health' } },
+      capabilities,
+      model: undefined as any,
+      tools: [],
+      skills: [],
+      constraints: {
+        max_concurrent: isNaN(maxConcurrent) ? 1 : maxConcurrent,
+        timeout_default: isNaN(timeoutDefault) ? 30 : timeoutDefault,
+        queue_max: isNaN(queueMax) ? 100 : queueMax,
+        queue_strategy: 'fifo',
+        retry_max: 3,
+      },
+      security: {},
+      heartbeat: { interval: 10 },
+    }
+
+    return new BeeAgent(spec)
   }
 
-  /** 注册工具 */
-  registerTool(id: string, handlerOrSchema: ((input: unknown) => unknown) | Record<string, unknown>): void {
-    this.#toolRegistry.register(id, handlerOrSchema)
+  /** 适配外部日志器为内部 Logger */
+  #adaptLogger(external?: ExternalLogger): Logger {
+    if (!external) return new Logger()
+    // 用外部日志器作为输出
+    return new Logger({
+      level: 'debug',
+      output: {
+        log: (msg: string) => external.info(msg),
+        warn: (msg: string) => external.warn(msg),
+        error: (msg: string) => external.error(msg),
+      }
+    })
+  }
+
+  /** 注册任务处理器（支持泛型） */
+  onTask<TInput = unknown, TOutput = unknown>(
+    capability: string,
+    handler: (ctx: import('./task/task-context.js').TaskContext<TInput>) => Promise<TOutput | import('./types.js').StructuredTaskResult<TOutput>>,
+  ): void {
+    this.#taskManager.registerHandler(capability, handler as TaskHandler)
+  }
+
+  /** 注册工具（支持函数简写、纯 schema 对象、和带 schema 的完整定义） */
+  registerTool(id: string, handlerOrDef: ((input: unknown) => unknown) | FullToolDefinition | Record<string, unknown>): void {
+    this.#toolRegistry.register(id, handlerOrDef)
+  }
+
+  /** 获取所有已注册工具的 JSON Schema */
+  getToolSchemas(): ToolSchema[] {
+    return this.#toolRegistry.getToolSchemas()
   }
 
   /** 定义技能 */
@@ -87,6 +156,11 @@ export class BeeAgent extends EventEmitter {
   setModelCaller(fn: ModelCaller): void {
     this.#modelCaller = fn
     this.#taskManager.setModelCaller(fn)
+  }
+
+  /** 设置流式模型调用函数 */
+  setStreamingModelCaller(fn: StreamingModelCaller): void {
+    this.#taskManager.setStreamingModelCaller(fn)
   }
 
   /**
@@ -103,8 +177,8 @@ export class BeeAgent extends EventEmitter {
     this.#colonyToken = colonyToken
 
     try {
-      // 1. 启动 HTTP 服务器
-      this.#httpServer = new BeeHttpServer(this.#taskManager, this.#logger)
+      // 1. 启动 HTTP 服务器（传递端点认证配置）
+      this.#httpServer = new BeeHttpServer(this.#taskManager, this.#logger, this.#spec.security?.endpoint_auth)
       const endpoint = this.#spec.runtime.endpoint
       let port = 0
       if (endpoint) {
@@ -138,10 +212,22 @@ export class BeeAgent extends EventEmitter {
         this.#logger.warn(`Disconnected: ${data.reason}`)
         this.#status = 'disconnected'
         this.emit('disconnected', data)
-        this.#startReconnector()
+        if (!this.#devMode) {
+          this.#startReconnector()
+        } else {
+          this.#logger.info('[devMode] Skipping auto-reconnect')
+        }
       })
 
       this.#heartbeat.start(sessionToken, () => this.#taskManager.getStats())
+
+      // 4. 启动健康检查服务器（可选）
+      const hc = this.#spec.runtime.health_check
+      if (hc?.enabled) {
+        this.#healthServer = new BeeHttpServer(this.#taskManager, this.#logger)
+        await this.#healthServer.start(hc.port)
+        this.#logger.info(`Health check server listening on port ${hc.port}`)
+      }
 
       this.#status = 'connected'
       this.emit('joined', { agentId, sessionToken })
@@ -213,11 +299,14 @@ export class BeeAgent extends EventEmitter {
         this.#logger.warn(`Disconnected: ${data.reason}`)
         this.#status = 'disconnected'
         this.emit('disconnected', data)
-        this.#startReconnector()
+        if (!this.#devMode) {
+          this.#startReconnector()
+        }
       })
       this.#heartbeat.start(sessionToken, () => this.#taskManager.getStats())
 
       this.emit('reconnected', { agentId })
+      this.#reconnectCount++
       this.#reconnector = null
     })
 
@@ -232,6 +321,7 @@ export class BeeAgent extends EventEmitter {
   async #cleanup(): Promise<void> {
     this.#heartbeat?.stop()
     await this.#httpServer?.stop()
+    await this.#healthServer?.stop()
     this.#sessionToken = null
   }
 }
