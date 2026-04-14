@@ -6,7 +6,8 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 const external = (id) =>
   id.startsWith('node:') ||
   id === 'js-yaml' || id.startsWith('js-yaml/') ||
-  id === 'zod' || id.startsWith('zod/')
+  id === 'zod' || id.startsWith('zod/') ||
+  id === 'zod-to-json-schema' || id.startsWith('zod-to-json-schema/')
 
 const commonPlugins = [
   resolve({ preferBuiltins: true }),
