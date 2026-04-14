@@ -97,7 +97,7 @@ export class TaskManager {
     const task = payload.task ?? {}
     const context = payload.context ?? {}
     const taskId = task.task_id ?? 'unknown'
-    const capability = task.name ?? task.description ?? ''
+    const capability = task.capability ?? task.name ?? task.description ?? ''
     const timeoutSec = task.constraints?.timeout ?? this.#defaultTimeoutSec
 
     const handler = this.#resolveHandler(capability)
@@ -158,7 +158,7 @@ export class TaskManager {
 
     const next = this.#queue.shift()!
     const task = next.payload.task ?? {}
-    const capability = task.name ?? task.description ?? ''
+    const capability = task.capability ?? task.name ?? task.description ?? ''
     const timeoutSec = task.constraints?.timeout ?? this.#defaultTimeoutSec
 
     const handler = this.#resolveHandler(capability)
@@ -177,7 +177,7 @@ export class TaskManager {
     const task = payload.task ?? {}
     const context = payload.context ?? {}
     const taskId = task.task_id ?? 'unknown'
-    const capability = task.name ?? task.description ?? ''
+    const capability = task.capability ?? task.name ?? task.description ?? ''
     const trace = this.#trace(payload, taskId)
 
     const abortController = new AbortController()
