@@ -90,6 +90,22 @@ export class BeeAgent extends EventEmitter {
     const maxConcurrent = parseInt(process.env.BEE_MAX_CONCURRENT ?? '1', 10)
     const timeoutDefault = parseInt(process.env.BEE_TIMEOUT ?? '30', 10)
     const queueMax = parseInt(process.env.BEE_QUEUE_MAX ?? '100', 10)
+    const endpointAuthType = process.env.BEE_ENDPOINT_AUTH_TYPE
+    const endpointAuthSecret = process.env.BEE_ENDPOINT_AUTH_SECRET
+    const allowInsecureEndpoint = process.env.BEE_ALLOW_INSECURE_ENDPOINT === 'true'
+    const normalizedEndpointAuthType = endpointAuthType === 'bearer' || endpointAuthType === 'hmac'
+      ? endpointAuthType
+      : undefined
+
+    if (endpointAuthType && !normalizedEndpointAuthType) {
+      throw new BeeError('BEE_ENDPOINT_AUTH_TYPE must be "bearer" or "hmac"')
+    }
+    if (endpointAuthType && !endpointAuthSecret) {
+      throw new BeeError('BEE_ENDPOINT_AUTH_SECRET is required when BEE_ENDPOINT_AUTH_TYPE is set')
+    }
+    if (process.env.NODE_ENV === 'production' && !endpointAuthType && !allowInsecureEndpoint) {
+      throw new BeeError('Endpoint authentication is required in production. Set BEE_ENDPOINT_AUTH_TYPE/BEE_ENDPOINT_AUTH_SECRET or BEE_ALLOW_INSECURE_ENDPOINT=true to override.')
+    }
 
     if (capabilities.length === 0) {
       throw new BeeError('BEE_CAPABILITIES environment variable is required (comma-separated)')
@@ -109,7 +125,18 @@ export class BeeAgent extends EventEmitter {
         queue_strategy: 'fifo',
         retry_max: 3,
       },
-      security: {},
+      security: {
+        ...(normalizedEndpointAuthType && endpointAuthSecret
+          ? {
+            endpoint_auth: {
+              type: normalizedEndpointAuthType,
+              secret: endpointAuthSecret,
+              hmac: { max_skew_seconds: 300, nonce_ttl_seconds: 300 },
+            }
+          }
+          : {}),
+        allow_insecure_endpoint: allowInsecureEndpoint,
+      },
       heartbeat: { interval: 10 },
     }
 
@@ -173,13 +200,24 @@ export class BeeAgent extends EventEmitter {
     if (this.#status !== 'disconnected') {
       throw new BeeError(`Cannot join in state: ${this.#status}`)
     }
+    if (process.env.NODE_ENV === 'production'
+      && !this.#spec.security?.endpoint_auth
+      && !this.#spec.security?.allow_insecure_endpoint
+    ) {
+      throw new BeeError('Endpoint authentication is required in production. Configure security.endpoint_auth or explicitly set security.allow_insecure_endpoint=true.')
+    }
 
     this.#status = 'joining'
     this.#colonyToken = colonyToken
 
     try {
       // 1. 启动 HTTP 服务器（传递端点认证配置）
-      this.#httpServer = new BeeHttpServer(this.#taskManager, this.#logger, this.#spec.security?.endpoint_auth)
+      this.#httpServer = new BeeHttpServer(
+        this.#taskManager,
+        this.#logger,
+        this.#spec.security?.endpoint_auth,
+        { healthPath: '/bee/health', agentIdProvider: () => this.#agentId }
+      )
       const endpoint = this.#spec.runtime.endpoint
       let port = 0
       if (endpoint) {
@@ -225,9 +263,14 @@ export class BeeAgent extends EventEmitter {
       // 4. 启动健康检查服务器（可选）
       const hc = this.#spec.runtime.health_check
       if (hc?.enabled) {
-        this.#healthServer = new BeeHttpServer(this.#taskManager, this.#logger)
+        this.#healthServer = new BeeHttpServer(
+          this.#taskManager,
+          this.#logger,
+          undefined,
+          { healthPath: hc.path, agentIdProvider: () => this.#agentId }
+        )
         await this.#healthServer.start(hc.port)
-        this.#logger.info(`Health check server listening on port ${hc.port}`)
+        this.#logger.info(`Health check server listening on port ${hc.port} path ${hc.path}`)
       }
 
       this.#status = 'connected'

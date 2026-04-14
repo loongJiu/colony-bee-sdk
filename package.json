@@ -1,6 +1,6 @@
 {
   "name": "colony-bee-sdk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Colony Bee SDK - Agent 接入 Colony 系统的 TypeScript SDK",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
@@ -35,8 +35,9 @@
     "build:cts": "node scripts/generate-dcts.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run clean && npm run build",
+    "prepublishOnly": "npm run test:contracts && npm run clean && npm run build",
     "test": "vitest run",
+    "test:contracts": "vitest run test/contracts/control-plane-contract.test.ts test/protocol/handshake.test.ts test/protocol/reconnector.test.ts test/protocol/heartbeat.test.ts test/transport/http-server.test.ts test/transport/queen-client.test.ts",
     "test:watch": "vitest"
   },
   "keywords": [

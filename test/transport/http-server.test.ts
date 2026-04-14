@@ -5,10 +5,16 @@ import { ToolRegistry } from '../../src/task/tool-registry.js'
 import { SkillRegistry } from '../../src/skill-registry.js'
 import { Logger } from '../../src/logger.js'
 import { request } from 'node:http'
+import { createHash, createHmac } from 'node:crypto'
+import { CONTROL_PLANE_CONTRACT_VERSION } from '../../src/contracts/control-plane.js'
 
 const logger = new Logger({ level: 'warn', output: { log: vi.fn(), warn: vi.fn(), error: vi.fn() } })
 
-function createServer(authConfig?: { type: 'bearer' | 'hmac'; secret: string }) {
+function createServer(authConfig?: {
+  type: 'bearer' | 'hmac'
+  secret: string
+  hmac?: { max_skew_seconds?: number; nonce_ttl_seconds?: number }
+}, options?: { healthPath?: string }) {
   const tools = new ToolRegistry()
   const skills = new SkillRegistry()
   const taskManager = new TaskManager({
@@ -20,30 +26,48 @@ function createServer(authConfig?: { type: 'bearer' | 'hmac'; secret: string }) 
   })
   taskManager.registerHandler('test', async (ctx) => ({ result: 'ok', taskId: ctx.taskId }))
 
-  return { server: new BeeHttpServer(taskManager, logger, authConfig), taskManager, tools, skills }
+  return { server: new BeeHttpServer(taskManager, logger, authConfig, options), taskManager, tools, skills }
 }
 
 function fetch(server: BeeHttpServer, method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<{ status: number; data: any }> {
   const addr = server.address!
   return new Promise((resolve, reject) => {
+    const payload = typeof body === 'string' ? body : (body ? JSON.stringify(body) : '')
     const opts = {
       hostname: '127.0.0.1',
       port: addr!.port,
       path,
       method,
-      headers: { 'Content-Type': 'application/json', ...headers }
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload).toString(), ...headers }
     }
     const req = request(opts, (res) => {
       let data = ''
       res.on('data', (chunk: Buffer) => { data += chunk })
       res.on('end', () => {
-        resolve({ status: res.statusCode!, data: data ? JSON.parse(data) : null })
+        try {
+          resolve({ status: res.statusCode!, data: data ? JSON.parse(data) : null })
+        } catch {
+          resolve({ status: res.statusCode!, data })
+        }
       })
     })
     req.on('error', reject)
-    if (body) req.write(JSON.stringify(body))
+    if (payload) req.write(payload)
     req.end()
   })
+}
+
+function signHmacRequest(input: {
+  method: string
+  path: string
+  body: string
+  timestamp: string
+  nonce: string
+  secret: string
+}): string {
+  const bodyHash = createHash('sha256').update(input.body).digest('hex')
+  const canonical = `${input.method.toUpperCase()}\n${input.path}\n${bodyHash}\n${input.timestamp}\n${input.nonce}`
+  return createHmac('sha256', input.secret).update(canonical).digest('hex')
 }
 
 describe('BeeHttpServer', () => {
@@ -70,6 +94,25 @@ describe('BeeHttpServer', () => {
     expect(res.status).toBe(200)
     expect(res.data.status).toBe('success')
     expect(res.data.output).toEqual({ result: 'ok', taskId: 't1' })
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
+  })
+
+  it('task 回包包含 request/session/task/agent 跟踪字段', async () => {
+    ctx = createServer()
+    await ctx.server.start(0)
+
+    const res = await fetch(ctx.server, 'POST', '/bee/task', {
+      request_id: 'req-1',
+      session_id: 'sess-1',
+      agent_id: 'agent-1',
+      task: { task_id: 't-trace', name: 'test', input: 'hello' }
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.data.request_id).toBe('req-1')
+    expect(res.data.session_id).toBe('sess-1')
+    expect(res.data.task_id).toBe('t-trace')
+    expect(res.data.agent_id).toBe('agent-1')
   })
 
   it('POST /bee/cancel 取消任务', async () => {
@@ -79,6 +122,7 @@ describe('BeeHttpServer', () => {
     const res = await fetch(ctx.server, 'POST', '/bee/cancel', { task_id: 't1' })
     expect(res.status).toBe(200)
     expect(res.data.status).toBe('cancelled')
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
   })
 
   it('GET /bee/health 返回健康状态', async () => {
@@ -87,9 +131,24 @@ describe('BeeHttpServer', () => {
 
     const res = await fetch(ctx.server, 'GET', '/bee/health')
     expect(res.status).toBe(200)
-    expect(res.data.status).toBe('ok')
+    expect(['healthy', 'degraded', 'unhealthy']).toContain(res.data.status)
+    expect(['ready', 'not_ready']).toContain(res.data.readiness)
     expect(res.data).toHaveProperty('active_tasks')
+    expect(res.data).toHaveProperty('queue_depth')
     expect(res.data).toHaveProperty('load')
+    expect(res.data.contract_version).toBe(CONTROL_PLANE_CONTRACT_VERSION)
+  })
+
+  it('自定义 health path 生效', async () => {
+    ctx = createServer(undefined, { healthPath: '/healthz' })
+    await ctx.server.start(0)
+
+    const oldPath = await fetch(ctx.server, 'GET', '/bee/health')
+    expect(oldPath.status).toBe(404)
+
+    const customPath = await fetch(ctx.server, 'GET', '/healthz')
+    expect(customPath.status).toBe(200)
+    expect(customPath.data.status).toBe('healthy')
   })
 
   it('未知路由返回 404', async () => {
@@ -126,6 +185,18 @@ describe('BeeHttpServer', () => {
   })
 
   describe('端点认证', () => {
+    it('task 请求契约主版本不兼容时返回 400', async () => {
+      ctx = createServer()
+      await ctx.server.start(0)
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', {
+        contract_version: '2.0.0',
+        task: { task_id: 't1', name: 'test', input: 'hello' }
+      })
+      expect(res.status).toBe(400)
+      expect(res.data.error).toContain('Incompatible control-plane contract version')
+    })
+
     it('bearer 认证 - 无 Authorization 头返回 401', async () => {
       ctx = createServer({ type: 'bearer', secret: 'test-secret' })
       await ctx.server.start(0)
@@ -163,6 +234,108 @@ describe('BeeHttpServer', () => {
 
       const res = await fetch(ctx.server, 'GET', '/bee/health')
       expect(res.status).toBe(200)
+    })
+
+    it('hmac 认证 - 请求签名正确时放行', async () => {
+      ctx = createServer({ type: 'hmac', secret: 'hmac-secret' })
+      await ctx.server.start(0)
+
+      const body = JSON.stringify({ task: { task_id: 't1', name: 'test', input: 'hello' } })
+      const timestamp = `${Math.floor(Date.now() / 1000)}`
+      const nonce = 'nonce-pass'
+      const signature = signHmacRequest({
+        method: 'POST',
+        path: '/bee/task',
+        body,
+        timestamp,
+        nonce,
+        secret: 'hmac-secret',
+      })
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', body, {
+        Authorization: `HMAC ${signature}`,
+        'X-Bee-Timestamp': timestamp,
+        'X-Bee-Nonce': nonce,
+      })
+      expect(res.status).toBe(200)
+      expect(res.data.status).toBe('success')
+    })
+
+    it('hmac 认证 - 请求体被篡改时拒绝', async () => {
+      ctx = createServer({ type: 'hmac', secret: 'hmac-secret' })
+      await ctx.server.start(0)
+
+      const signedBody = JSON.stringify({ task: { task_id: 't1', name: 'test', input: 'hello' } })
+      const tamperedBody = JSON.stringify({ task: { task_id: 't1', name: 'test', input: 'tampered' } })
+      const timestamp = `${Math.floor(Date.now() / 1000)}`
+      const nonce = 'nonce-tampered'
+      const signature = signHmacRequest({
+        method: 'POST',
+        path: '/bee/task',
+        body: signedBody,
+        timestamp,
+        nonce,
+        secret: 'hmac-secret',
+      })
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', tamperedBody, {
+        Authorization: `HMAC ${signature}`,
+        'X-Bee-Timestamp': timestamp,
+        'X-Bee-Nonce': nonce,
+      })
+      expect(res.status).toBe(401)
+    })
+
+    it('hmac 认证 - 过期时间戳请求拒绝', async () => {
+      ctx = createServer({ type: 'hmac', secret: 'hmac-secret', hmac: { max_skew_seconds: 5 } })
+      await ctx.server.start(0)
+
+      const body = JSON.stringify({ task: { task_id: 't1', name: 'test', input: 'hello' } })
+      const timestamp = `${Math.floor(Date.now() / 1000) - 60}`
+      const nonce = 'nonce-expired'
+      const signature = signHmacRequest({
+        method: 'POST',
+        path: '/bee/task',
+        body,
+        timestamp,
+        nonce,
+        secret: 'hmac-secret',
+      })
+
+      const res = await fetch(ctx.server, 'POST', '/bee/task', body, {
+        Authorization: `HMAC ${signature}`,
+        'X-Bee-Timestamp': timestamp,
+        'X-Bee-Nonce': nonce,
+      })
+      expect(res.status).toBe(401)
+    })
+
+    it('hmac 认证 - nonce 重放请求拒绝', async () => {
+      ctx = createServer({ type: 'hmac', secret: 'hmac-secret' })
+      await ctx.server.start(0)
+
+      const body = JSON.stringify({ task: { task_id: 't1', name: 'test', input: 'hello' } })
+      const timestamp = `${Math.floor(Date.now() / 1000)}`
+      const nonce = 'nonce-replay'
+      const signature = signHmacRequest({
+        method: 'POST',
+        path: '/bee/task',
+        body,
+        timestamp,
+        nonce,
+        secret: 'hmac-secret',
+      })
+      const headers = {
+        Authorization: `HMAC ${signature}`,
+        'X-Bee-Timestamp': timestamp,
+        'X-Bee-Nonce': nonce,
+      }
+
+      const first = await fetch(ctx.server, 'POST', '/bee/task', body, headers)
+      expect(first.status).toBe(200)
+
+      const replay = await fetch(ctx.server, 'POST', '/bee/task', body, headers)
+      expect(replay.status).toBe(401)
     })
   })
 })

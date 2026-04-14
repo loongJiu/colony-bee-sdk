@@ -36,6 +36,9 @@ export class TaskContext<TInput = unknown> {
     capability: string
     input: TInput
     signal: AbortSignal
+    requestId?: string
+    sessionId?: string
+    agentId?: string
     conversationId?: string
     sharedState?: Record<string, unknown>
     toolRegistry: ToolRegistry
@@ -53,7 +56,12 @@ export class TaskContext<TInput = unknown> {
     this.#skillRegistry = options.skillRegistry
     this.#modelCaller = options.modelCaller ?? null
     this.#streamingModelCaller = options.streamingModelCaller ?? null
-    this.logger = options.logger.child({ taskId: options.taskId })
+    this.logger = options.logger.child({
+      taskId: options.taskId,
+      requestId: options.requestId ?? 'unknown',
+      sessionId: options.sessionId ?? 'unknown',
+      agentId: options.agentId ?? 'unknown',
+    })
     this.#toolsProxy = new Proxy({} as Record<string, (input: unknown) => unknown>, {
       get: (_target: Record<string, (input: unknown) => unknown>, prop: string | symbol): ((input: unknown) => unknown) | undefined => {
         if (typeof prop !== 'string') return undefined

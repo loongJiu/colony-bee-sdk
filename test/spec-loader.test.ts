@@ -28,6 +28,7 @@ describe('BeeSpecSchema', () => {
     expect(spec.constraints.timeout_default).toBe(30)
     expect(spec.constraints.queue_max).toBe(100)
     expect(spec.constraints.retry_max).toBe(3)
+    expect(spec.security.allow_insecure_endpoint).toBe(false)
     expect(spec.heartbeat.interval).toBe(10)
   })
 
@@ -162,14 +163,21 @@ describe('SpecLoader.load', () => {
       '  - test',
       'security:',
       '  endpoint_auth:',
-      '    type: bearer',
+      '    type: hmac',
       '    secret: my-secret',
+      '    hmac:',
+      '      max_skew_seconds: 120',
+      '      nonce_ttl_seconds: 60',
+      '  allow_insecure_endpoint: false',
     ].join('\n'))
 
     try {
       const spec = await SpecLoader.load(yamlPath)
-      expect(spec.security?.endpoint_auth?.type).toBe('bearer')
+      expect(spec.security?.endpoint_auth?.type).toBe('hmac')
       expect(spec.security?.endpoint_auth?.secret).toBe('my-secret')
+      expect(spec.security?.endpoint_auth?.hmac?.max_skew_seconds).toBe(120)
+      expect(spec.security?.endpoint_auth?.hmac?.nonce_ttl_seconds).toBe(60)
+      expect(spec.security?.allow_insecure_endpoint).toBe(false)
     } finally {
       await rm(fixtureDir, { recursive: true })
     }

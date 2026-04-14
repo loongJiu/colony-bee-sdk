@@ -16,7 +16,7 @@
 
 ## 特性
 
-- **安全认证** — 四步握手协议（HMAC-SHA256）+ HTTP 端点认证（Bearer / HMAC）
+- **安全认证** — 四步握手协议（HMAC-SHA256）+ HTTP 端点认证（Bearer / 请求级 HMAC 签名）
 - **自动重连** — 心跳上报 + 指数退避重连
 - **任务管理** — 并发控制、优先级队列、超时管理
 - **工具系统** — Zod Schema 驱动的工具注册，自动生成 LLM 兼容的 JSON Schema
@@ -24,6 +24,7 @@
 - **结构化结果** — 泛型 `onTask<TInput, TOutput>` + 自动元数据收集
 - **模型无关** — 通过 `setModelCaller` / `setStreamingModelCaller` 注入任意 LLM
 - **环境变量插值** — bee.yaml 支持 `${VAR}` 和 `${VAR:-default}` 语法
+- **契约版本治理** — 控制面契约版本固定与兼容校验（发布前契约回归）
 - **灵活部署** — 支持 bee.yaml 声明式配置或纯环境变量构建（`fromEnv()`）
 - **开发模式** — `devMode` 开启详细日志、禁用重连，快速定位问题
 - **事件驱动** — 基于 EventEmitter 的生命周期管理
@@ -268,6 +269,7 @@ agent.onTask<{ topic: string }, { article: string }>('writing', async (ctx) => {
 const agent = BeeAgent.fromEnv()
 // 读取环境变量：BEE_ROLE, BEE_NAME, BEE_CAPABILITIES（逗号分隔）
 // BEE_MAX_CONCURRENT, BEE_TIMEOUT, BEE_QUEUE_MAX
+// 可选安全变量：BEE_ENDPOINT_AUTH_TYPE, BEE_ENDPOINT_AUTH_SECRET, BEE_ALLOW_INSECURE_ENDPOINT
 ```
 
 ### 开发模式
@@ -315,6 +317,9 @@ const agent = await BeeAgent.fromSpec('./bee.yaml', {
 | `constraints.retry_max` | `number` | 否 | `3` | 最大重试次数 |
 | `security.endpoint_auth.type` | `string` | 否 | - | 认证类型：`bearer` / `hmac` |
 | `security.endpoint_auth.secret` | `string` | 否 | - | 认证密钥，支持 `${VAR}` 插值 |
+| `security.endpoint_auth.hmac.max_skew_seconds` | `number` | 否 | `300` | HMAC 时间窗（秒） |
+| `security.endpoint_auth.hmac.nonce_ttl_seconds` | `number` | 否 | `300` | nonce 防重放 TTL（秒） |
+| `security.allow_insecure_endpoint` | `boolean` | 否 | `false` | 生产环境是否允许未认证端点（仅建议临时调试） |
 | `heartbeat.interval` | `number` | 否 | `10` | 心跳间隔（秒） |
 
 ### 环境变量插值
@@ -333,6 +338,29 @@ security:
   endpoint_auth:
     type: bearer
     secret: ${ENDPOINT_SECRET}
+```
+
+### 端点认证与安全基线
+
+- `bearer`：适合内网、可信网络、或已在网关层做强认证的场景。
+- `hmac`：适合公网入口，SDK 按请求校验签名，默认包含时间窗和 nonce 防重放。
+- 生产环境默认要求 `endpoint_auth`；若确需临时放开，必须显式设置 `security.allow_insecure_endpoint: true`（或环境变量 `BEE_ALLOW_INSECURE_ENDPOINT=true`）。
+- 推荐部署拓扑：`Client -> API Gateway(mTLS/WAF/rate limit) -> Bee endpoint`。SDK 保持轻量，mTLS 和流量治理由网关承接。
+
+HMAC 签名头规范：
+
+- `Authorization: HMAC <signature>`
+- `X-Bee-Timestamp: <unix-seconds | unix-ms | ISO8601>`
+- `X-Bee-Nonce: <unique-request-id>`
+
+canonical string：
+
+```text
+METHOD
+/request/path
+sha256(body)
+timestamp
+nonce
 ```
 
 ## 握手协议
@@ -357,6 +385,25 @@ Agent                          Queen
 4. **Welcome** — Queen 返回 `agent_id` + `session_token`
 
 握手成功后，Agent 自动启动心跳，Queen 通过 HTTP 反向调用 Agent 端点分发任务。
+
+## 控制面契约与兼容矩阵
+
+- 当前契约版本：`1.0.0`（SDK 运行时会校验 `contract_version`）
+- 兼容规则与字段治理：[`docs/control-plane-contract.md`](./docs/control-plane-contract.md)
+- Queen x SDK 兼容矩阵：[`docs/compatibility-matrix.md`](./docs/compatibility-matrix.md)
+
+发布前可执行契约回归门禁：
+
+```bash
+npm run test:contracts
+```
+
+## 健康检查与接入路径
+
+- `runtime.health_check.path` 已支持自定义（例如 `/healthz`）
+- 健康状态返回分级语义：`healthy / degraded / unhealthy`
+- 同时返回 readiness：`ready / not_ready`
+- 集成 runbook（含两条接入路径）：[`docs/integration-runbook.md`](./docs/integration-runbook.md)
 
 ## 测试
 

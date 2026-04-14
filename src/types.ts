@@ -6,6 +6,13 @@
 
 import type { TaskContext } from './task/task-context.js'
 import type { ErrorCode } from './errors.js'
+import type {
+  CancelSignal,
+  ControlPlaneContractDescriptor,
+  HealthPayload as ControlPlaneHealthPayload,
+  TaskEnvelope,
+  TaskResultEnvelope as ControlPlaneTaskResultEnvelope,
+} from './contracts/control-plane.js'
 
 /** Agent 连接状态 */
 export type AgentStatus = 'disconnected' | 'joining' | 'connected' | 'leaving'
@@ -171,6 +178,7 @@ export interface VerifyResponse {
   queen_id: string
   colony_version: string
   joined_at: string
+  contract_version?: string
 }
 
 /** Queen 心跳请求载荷 */
@@ -179,27 +187,23 @@ export interface HeartbeatPayload {
   load?: number
   active_tasks?: number
   queue_depth?: number
+  contract_version?: string
 }
 
-/** Queen 任务分配载荷 */
-export interface TaskAssignPayload {
-  task?: {
-    task_id?: string
-    name?: string
-    description?: string
-    input?: unknown
-    constraints?: { timeout?: number }
-  }
-  context?: {
-    conversation_id?: string
-    shared_state?: Record<string, unknown>
-  }
-}
+/** 控制面契约描述 */
+export type ContractDescriptor = ControlPlaneContractDescriptor
 
-/** Queen 任务取消载荷 */
-export interface TaskCancelPayload {
-  task_id?: string
-}
+/** Queen 任务分配载荷（TaskEnvelope） */
+export type TaskAssignPayload = TaskEnvelope
+
+/** Queen 任务结果回包（TaskResultEnvelope） */
+export type TaskResultEnvelope = ControlPlaneTaskResultEnvelope
+
+/** Queen 任务取消载荷（CancelSignal） */
+export type TaskCancelPayload = CancelSignal
+
+/** 健康检查回包（HealthPayload） */
+export type HealthPayload = ControlPlaneHealthPayload
 
 /** HTTP 服务器地址信息 */
 export interface ServerAddress {
