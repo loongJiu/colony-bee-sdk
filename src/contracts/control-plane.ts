@@ -30,6 +30,7 @@ export interface TaskEnvelope extends EnvelopeTraceFields {
     task_id?: string
     name?: string
     description?: string
+    capability?: string
     input?: unknown
     constraints?: { timeout?: number }
   }
